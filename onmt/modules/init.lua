@@ -15,4 +15,6 @@ require('onmt.modules.GlobalAttention')
 require('onmt.modules.Generator')
 require('onmt.modules.FeaturesGenerator')
 
+require('onmt.modules.Aggregator')
+
 return onmt

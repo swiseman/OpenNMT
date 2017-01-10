@@ -152,22 +152,67 @@ local function buildCriterion(vocabSize, features)
   return criterion
 end
 
+local function allTraining(model)
+    for _, mod in pairs(model) do
+        if mod.training then
+            mod:training()
+        end
+    end
+end
+
+local function allEvaluate(model)
+    for _, mod in pairs(model) do
+        if mod.evaluate then
+            mod:evaluate()
+        end
+    end
+end
+
+-- gets encodings for all rows
+function allEncForward(model, batch)
+    local allEncStates, allCtxs = {}, {}
+    for j = 1, batch.sourceInput:size(1) do
+        batch:setInputRow(j)
+        local encStates, context = model["encoder" .. j]:forward(batch)
+        table.insert(allEncStates, encStates)
+        table.insert(allCtxs, context)
+    end
+    batch:setInputRow(nil) -- for sanity
+    local aggEncStates, catCtx = model.aggregator:forward(allEncStates, allCtxs)
+    return aggEncStates, catCtx
+end
+
+-- goes backward over all encoders
+function allEncBackward(model, batch, encGradStatesOut, gradContext)
+    local allEncGradOuts, gradCtxs = model.aggregator:backward(encGradStatesOut, gradContext)
+    for j = 1, batch.sourceInput:size(1) do
+        batch:setInputRow(j)
+        model["encoder" .. j]:backward(batch, allEncGradOuts[j], gradCtxs[j])
+    end
+    batch:setInputRow(nil)
+end
+
 local function eval(model, criterion, data)
   local loss = 0
   local total = 0
 
-  model.encoder:evaluate()
-  model.decoder:evaluate()
+  -- model.encoder:evaluate()
+  -- model.decoder:evaluate()
+  allEvaluate(model)
 
   for i = 1, data:batchCount() do
     local batch = onmt.utils.Cuda.convert(data:getBatch(i))
-    local encoderStates, context = model.encoder:forward(batch)
-    loss = loss + model.decoder:computeLoss(batch, encoderStates, context, criterion)
+    --local encoderStates, context = model.encoder:forward(batch)
+    local allEncStates, allCtxs = allEncForward(model, batch)
+    local aggEncStates, catCtx = model.aggregator:forward(allEncStates, allCtxs)
+    --loss = loss + model.decoder:computeLoss(batch, encoderStates, context, criterion)
+    loss = loss + model.decoder:computeLoss(batch, aggEncStates, catCtx, criterion)
     total = total + batch.targetNonZeros
   end
 
-  model.encoder:training()
-  model.decoder:training()
+  -- model.encoder:training()
+  -- model.decoder:training()
+  allTraining(model)
 
   return math.exp(loss / total)
 end
@@ -176,9 +221,10 @@ local function trainModel(model, trainData, validData, dataset, info)
     local criterion
     local verbose = true
     local params, gradParams = initParams(model, verbose)
-    for _, mod in pairs(model) do
-        mod:training()
-    end
+    allTraining(model)
+    -- for _, mod in pairs(model) do
+    --     mod:training()
+    -- end
 
     -- define criterion of each GPU
     criterion = onmt.utils.Cuda.convert(buildCriterion(dataset.dicts.tgt.words:size(),
@@ -186,12 +232,10 @@ local function trainModel(model, trainData, validData, dataset, info)
 
     -- optimize memory of the first clone
     if not opt.disable_mem_optimization then
-        assert(false) -- need to specialize this
         local batch = onmt.utils.Cuda.convert(trainData:getBatch(1))
         batch.totalSize = batch.size
-        onmt.utils.Memory.optimize(model, criterion, batch, verbose)
+        onmt.utils.Memory.boxOptimize(model, trainData.nSourceRows, criterion, batch, verbose)
     end
-
 
     local optim = onmt.train.Optim.new({
         method = opt.optim,
@@ -230,24 +274,10 @@ local function trainModel(model, trainData, validData, dataset, info)
             onmt.utils.Cuda.convert(batch)
 
             optim:zeroGrad(gradParams)
-            local allEncStates, allCtxs = {}, {}
-            for j = 1, batch.sourceInput:size(1) do
-                batch:setInputRow(j)
-                local encStates, context = model["encoder" .. j]:forward(batch)
-                table.insert(allEncStates, encStates)
-                table.insert(allCtxs, context)
-            end
-            batch:setInputRow(nil) -- for sanity
-            --local encStates, context = model.encoder:forward(batch)
-            local aggEncStates, catCtxs = model.aggregator:forward(allEncStates, allCtxs)
-            local decOutputs = model.decoder:forward(batch, aggEncStates, catCtxs)
+            local aggEncStates, catCtx = allEncForward(model, batch)
+            local decOutputs = model.decoder:forward(batch, aggEncStates, catCtx)
             local encGradStatesOut, gradContext, loss = model.decoder:backward(batch, decOutputs, criterion)
-            local allEncGradOuts, gradCatCtx = model.aggregator:backward(encGradStatesOut, gradContext)
-            for j = 1, batch.sourceInput:size(1) do
-                batch:setInputRow(j)
-                model["encoder" .. j]:backward(batch, allEncGradOuts[j], gradCatCtx[j])
-            end
-            batch:setInputRow(nil)
+            allEncBackward(model, batch, encGradStatesOut, gradContext)
 
             -- Update the parameters.
             optim:prepareGrad(gradParams[1], opt.max_grad_norm)
@@ -434,6 +464,9 @@ local function main()
             model["encoder" .. i] = makeVariouslyTiedEncoder(opt, dataset.dicts.src, model.decoder, sharee)
             -- already on gpu
         end
+
+        model.aggregator = onmt.Aggregator(trainData.nSourceRows, opt.rnn_size, opt.rnn_size)
+        onmt.utils.Cuda.convert(model.aggregator)
 
     end
 
