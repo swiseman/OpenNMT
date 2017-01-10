@@ -69,6 +69,7 @@ function BoxBatch:__init(srcs, srcFeatures, tgt, tgtFeatures, bsLen)
   self.size = #tgt
 
   self.sourceLength = bsLen
+  self.inputRow = nil
   --self.sourceLength, self.sourceSize = getLength(src)
 
   local sourceSeq = torch.IntTensor(#srcs, self.sourceLength, self.size):fill(onmt.Constants.PAD)
@@ -168,6 +169,10 @@ function BoxBatch:setSourceInput(sourceInput)
   return self
 end
 
+function BoxBatch:setInputRow(j)
+    self.inputRow = j
+end
+
 --[[ Set target input directly.
 
 Parameters:
@@ -212,10 +217,10 @@ local function addInputFeatures(inputs, featuresSeq, t)
   end
 end
 
---[[ Get source input j's batch at timestep `t`. --]]
-function BoxBatch:getSourceInput(j, t)
+--[[ Get source batch at timestep `t`. --]]
+function BoxBatch:getSourceInput(t)
   -- If a regular input, return word id, otherwise a table with features.
-  local inputs = self.sourceInput[j][t]
+  local inputs = self.sourceInput[self.inputRow][t]
 
   if #self.sourceInputFeatures > 0 then
     inputs = { inputs }

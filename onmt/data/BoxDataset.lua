@@ -15,6 +15,7 @@ function BoxDataset:__init(srcData, tgtData)
   end
   -- source length(s) don't change (and we'll pad line scores...)
   self.maxSourceLength = self.srcs[1][1]:size(1)
+  self.nSourceRows = #self.srcs
   self.cache = {} -- stores batches
 end
 

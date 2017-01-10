@@ -64,6 +64,7 @@ cmd:option('-pre_word_vecs_dec', '', [[If a valid path is specified, then this w
                                      See README for specific formatting instructions.]])
 cmd:option('-fix_word_vecs_enc', false, [[Fix word embeddings on the encoder side]])
 cmd:option('-fix_word_vecs_dec', false, [[Fix word embeddings on the decoder side]])
+cmd:option('-tie_encoder_rnns', false, [[Tie all encoder rnns]])
 
 cmd:text("")
 cmd:text("**Other options**")
@@ -71,11 +72,6 @@ cmd:text("")
 
 -- GPU
 cmd:option('-gpuid', 0, [[1-based identifier of the GPU to use. CPU is used when the option is < 1]])
-cmd:option('-nparallel', 1, [[When using GPUs, how many batches to execute in parallel.
-                            Note: this will technically change the final batch size to max_batch_size*nparallel.]])
-cmd:option('-async_parallel', false, [[Use asynchronous parallelism training.]])
-cmd:option('-async_parallel_minbatch', 1000, [[For async parallel computing, minimal number of batches before being parallel.]])
-cmd:option('-no_nccl', false, [[Disable usage of nccl in parallel mode.]])
 cmd:option('-disable_mem_optimization', false, [[Disable sharing internal of internal buffers between clones - which is in general safe,
                                                 except if you want to look inside clones for visualization purpose for instance.]])
 
@@ -89,45 +85,47 @@ cmd:option('-json_log', false, [[Outputs logs in JSON format.]])
 local opt = cmd:parse(arg)
 
 local function initParams(model, verbose)
-  local numParams = 0
-  local params = {}
-  local gradParams = {}
+    local numParams = 0
+    local params = {}
+    local gradParams = {}
 
-  if verbose then
-    print('Initializing parameters...')
-  end
+    if verbose then
+        print('Initializing parameters...')
+    end
 
-  -- Order the model table because we need all replicas to have the same order.
-  local orderedIndex = {}
-  for key in pairs(model) do
-    table.insert(orderedIndex, key)
-  end
-  table.sort(orderedIndex)
+    -- we assume all the sharing has already been done,
+    -- so we just make a big container to flatten everything
+    local everything = nn.Sequential()
+    for k, mod in pairs(model) do
+        everything:add(mod)
+    end
 
-  for _, key in ipairs(orderedIndex) do
-    local mod = model[key]
-    local p, gp = mod:getParameters()
+    local p, gp = everything:getParameters()
 
     if opt.train_from:len() == 0 then
-      p:uniform(-opt.param_init, opt.param_init)
+        p:uniform(-opt.param_init, opt.param_init)
+    else
+        assert(false)
+    end
 
-      mod:apply(function (m)
-        if m.postParametersInitialization then
-          m:postParametersInitialization()
-        end
-      end)
+    -- do module specific init; wordembeddings will happen multiple times,
+    -- but who cares
+    for k, mod in pairs(model) do
+        mod:apply(function (m)
+            if m.postParametersInitialization then
+                m:postParametersInitialization()
+            end
+        end)
     end
 
     numParams = numParams + p:size(1)
     table.insert(params, p)
     table.insert(gradParams, gp)
-  end
 
-  if verbose then
-    print(" * number of parameters: " .. numParams)
-  end
-
-  return params, gradParams
+    if verbose then
+        print(" * number of parameters: " .. numParams)
+    end
+    return params, gradParams
 end
 
 local function buildCriterion(vocabSize, features)
@@ -175,255 +173,150 @@ local function eval(model, criterion, data)
 end
 
 local function trainModel(model, trainData, validData, dataset, info)
-  local params, gradParams = {}, {}
-  local criterion
-
-  onmt.utils.Parallel.launch(function(idx)
-    -- Only logs information of the first thread.
-    local verbose = idx == 1 and not opt.json_log
-
-    _G.params, _G.gradParams = initParams(_G.model, verbose)
-    for _, mod in pairs(_G.model) do
-      mod:training()
+    local criterion
+    local verbose = true
+    local params, gradParams = initParams(model, verbose)
+    for _, mod in pairs(model) do
+        mod:training()
     end
 
     -- define criterion of each GPU
-    _G.criterion = onmt.utils.Cuda.convert(buildCriterion(dataset.dicts.tgt.words:size(),
+    criterion = onmt.utils.Cuda.convert(buildCriterion(dataset.dicts.tgt.words:size(),
                                                           dataset.dicts.tgt.features))
 
     -- optimize memory of the first clone
     if not opt.disable_mem_optimization then
-      local batch = onmt.utils.Cuda.convert(trainData:getBatch(1))
-      batch.totalSize = batch.size
-      onmt.utils.Memory.optimize(_G.model, _G.criterion, batch, verbose)
+        assert(false) -- need to specialize this
+        local batch = onmt.utils.Cuda.convert(trainData:getBatch(1))
+        batch.totalSize = batch.size
+        onmt.utils.Memory.optimize(model, criterion, batch, verbose)
     end
 
-    return idx, _G.criterion, _G.params, _G.gradParams
-  end, function(idx, thecriterion, theparams, thegradParams)
-    if idx == 1 then
-      criterion = thecriterion
-    end
-    params[idx] = theparams
-    gradParams[idx] = thegradParams
-  end)
 
-  local optim = onmt.train.Optim.new({
-    method = opt.optim,
-    numModels = #params[1],
-    learningRate = opt.learning_rate,
-    learningRateDecay = opt.learning_rate_decay,
-    startDecayAt = opt.start_decay_at,
-    optimStates = opt.optim_states
-  })
+    local optim = onmt.train.Optim.new({
+        method = opt.optim,
+        numModels = 1, -- we flattened everything
+        learningRate = opt.learning_rate,
+        learningRateDecay = opt.learning_rate_decay,
+        startDecayAt = opt.start_decay_at,
+        optimStates = opt.optim_states
+    })
 
-  local checkpoint = onmt.train.Checkpoint.new(opt, model, optim, dataset)
+    local checkpoint = onmt.train.Checkpoint.new(opt, model, optim, dataset)
 
-  local function trainEpoch(epoch, lastValidPpl)
-    local epochState
-    local batchOrder
+    local function trainEpoch(epoch, lastValidPpl)
+        local epochState
+        local batchOrder
+        local startI = opt.start_iteration
 
-    local startI = opt.start_iteration
+        local numIterations = trainData:batchCount()
 
-    local numIterations = trainData:batchCount()
-    -- In parallel mode, number of iterations is reduced to reflect larger batch size.
-    if onmt.utils.Parallel.count > 1 and not opt.async_parallel then
-      numIterations = math.ceil(numIterations / onmt.utils.Parallel.count)
-    end
-
-    if startI > 1 and info ~= nil then
-      epochState = onmt.train.EpochState.new(epoch, numIterations, optim:getLearningRate(), lastValidPpl, info.epochStatus)
-      batchOrder = info.batchOrder
-    else
-      epochState = onmt.train.EpochState.new(epoch, numIterations, optim:getLearningRate(), lastValidPpl)
-      -- Shuffle mini batch order.
-      batchOrder = torch.randperm(trainData:batchCount())
-    end
-
-    opt.start_iteration = 1
-
-    local function trainNetwork()
-      optim:zeroGrad(_G.gradParams)
-
-      local encStates, context = _G.model.encoder:forward(_G.batch)
-      local decOutputs = _G.model.decoder:forward(_G.batch, encStates, context)
-
-      local encGradStatesOut, gradContext, loss = _G.model.decoder:backward(_G.batch, decOutputs, _G.criterion)
-      _G.model.encoder:backward(_G.batch, encGradStatesOut, gradContext)
-
-      return loss
-    end
-
-    if not opt.async_parallel then
-      local iter = 1
-      for i = startI, trainData:batchCount(), onmt.utils.Parallel.count do
-        local batches = {}
-        local totalSize = 0
-
-        for j = 1, math.min(onmt.utils.Parallel.count, trainData:batchCount() - i + 1) do
-          local batchIdx = batchOrder[i + j - 1]
-          if epoch <= opt.curriculum then
-            batchIdx = i + j - 1
-          end
-          table.insert(batches, trainData:getBatch(batchIdx))
-          totalSize = totalSize + batches[#batches].size
+        if startI > 1 and info ~= nil then
+            epochState = onmt.train.EpochState.new(epoch, numIterations, optim:getLearningRate(), lastValidPpl, info.epochStatus)
+            batchOrder = info.batchOrder
+        else
+            epochState = onmt.train.EpochState.new(epoch, numIterations, optim:getLearningRate(), lastValidPpl)
+            -- Shuffle mini batch order.
+            batchOrder = torch.randperm(trainData:batchCount())
         end
 
-        local losses = {}
+        --opt.start_iteration = 1
 
-        onmt.utils.Parallel.launch(function(idx)
-          _G.batch = batches[idx]
-          if _G.batch == nil then
-            return idx, 0
-          end
+        local iter = 1
+        for i = startI, trainData:batchCount() do
+            local batchIdx = epoch <= opt.curriculum and i or batchOrder[i]
+            local batch =  trainData:getBatch(batchIdx)
+            batch.totalSize = batch.size -- fuck off
+            onmt.utils.Cuda.convert(batch)
 
-          -- Send batch data to the GPU.
-          onmt.utils.Cuda.convert(_G.batch)
-          _G.batch.totalSize = totalSize
-          local loss = trainNetwork()
-
-          return idx, loss
-        end,
-        function(idx, loss)
-          losses[idx]=loss
-        end)
-
-        -- Accumulate the gradients from the different parallel threads.
-        onmt.utils.Parallel.accGradParams(gradParams, batches)
-
-        -- Update the parameters.
-        optim:prepareGrad(gradParams[1], opt.max_grad_norm)
-        optim:updateParams(params[1], gradParams[1])
-
-        -- Synchronize the parameters with the different parallel threads.
-        onmt.utils.Parallel.syncParams(params)
-
-        for bi = 1, #batches do
-          epochState:update(batches[bi], losses[bi])
-        end
-
-        if iter % opt.report_every == 0 then
-          epochState:log(iter, opt.json_log)
-        end
-        if opt.save_every > 0 and iter % opt.save_every == 0 then
-          checkpoint:saveIteration(iter, epochState, batchOrder, not opt.json_log)
-        end
-        iter = iter + 1
-      end
-    else
-      -- Asynchronous parallel.
-      local counter = onmt.utils.Parallel.getCounter()
-      counter:set(startI)
-      local masterGPU = onmt.utils.Parallel.gpus[1]
-      local gradBuffer = onmt.utils.Parallel.gradBuffer
-      local gmutexId = onmt.utils.Parallel.gmutexId()
-
-      while counter:get() <= trainData:batchCount() do
-        local startCounter = counter:get()
-
-        onmt.utils.Parallel.launch(function(idx)
-          -- First GPU is only used for master parameters.
-          -- Use 1 GPU only for 1000 first batch.
-          if idx == 1 or (idx > 2 and epoch == 1 and counter:get() < opt.async_parallel_minbatch) then
-            return
-          end
-
-          local lossThread = 0
-          local batchThread = {
-            size = 1,
-            sourceLength = 0,
-            targetLength = 0,
-            targetNonZeros = 0
-          }
-
-          while true do
-            -- Do not process more than 1000 batches (TODO - make option) in one shot.
-            if counter:get() - startCounter >= 1000 then
-              return lossThread, batchThread
+            optim:zeroGrad(gradParams)
+            local allEncStates, allCtxs = {}, {}
+            for j = 1, batch.sourceInput:size(1) do
+                batch:setInputRow(j)
+                local encStates, context = model["encoder" .. j]:forward(batch)
+                table.insert(allEncStates, encStates)
+                table.insert(allCtxs, context)
             end
-
-            local i = counter:inc()
-            if i > trainData:batchCount() then
-              return lossThread, batchThread
+            batch:setInputRow(nil) -- for sanity
+            --local encStates, context = model.encoder:forward(batch)
+            local aggEncStates, catCtxs = model.aggregator:forward(allEncStates, allCtxs)
+            local decOutputs = model.decoder:forward(batch, aggEncStates, catCtxs)
+            local encGradStatesOut, gradContext, loss = model.decoder:backward(batch, decOutputs, criterion)
+            local allEncGradOuts, gradCatCtx = model.aggregator:backward(encGradStatesOut, gradContext)
+            for j = 1, batch.sourceInput:size(1) do
+                batch:setInputRow(j)
+                model["encoder" .. j]:backward(batch, allEncGradOuts[j], gradCatCtx[j])
             end
-
-            local batchIdx = batchOrder[i]
-            if epoch <= opt.curriculum then
-              batchIdx = i
-            end
-
-            _G.batch = trainData:getBatch(batchIdx)
-
-            -- Send batch data to the GPU.
-            onmt.utils.Cuda.convert(_G.batch)
-            _G.batch.totalSize = _G.batch.size
-            local loss = trainNetwork()
+            batch:setInputRow(nil)
 
             -- Update the parameters.
-            optim:prepareGrad(_G.gradParams, opt.max_grad_norm)
+            optim:prepareGrad(gradParams[1], opt.max_grad_norm)
+            optim:updateParams(params[1], gradParams[1])
+            epochState:update(batch, loss)
 
-            -- Add up gradParams to params and synchronize back to this thread.
-            onmt.utils.Parallel.updateAndSync(params[1], _G.gradParams, _G.params, gradBuffer, masterGPU, gmutexId)
-
-            batchThread.sourceLength = batchThread.sourceLength + _G.batch.sourceLength * _G.batch.size
-            batchThread.targetLength = batchThread.targetLength + _G.batch.targetLength * _G.batch.size
-            batchThread.targetNonZeros = batchThread.targetNonZeros + _G.batch.targetNonZeros
-            lossThread = lossThread + loss
-
-            -- we don't have information about the other threads here - we can only report progress
-            if i % opt.report_every == 0 then
-              local stats = ''
-              stats = stats .. string.format('Epoch %d ; ', epoch)
-              stats = stats .. string.format('... batch %d/%d', i, trainData:batchCount())
-              print(stats)
+            if iter % opt.report_every == 0 then
+                epochState:log(iter, opt.json_log)
             end
-          end
-        end,
-        function(theloss, thebatch)
-          if theloss then
-            epochState:update(thebatch, theloss)
-          end
-        end)
-
-        if opt.report_every > 0 then
-          epochState:log(counter:get(), opt.json_log)
+            if opt.save_every > 0 and iter % opt.save_every == 0 then
+                checkpoint:saveIteration(iter, epochState, batchOrder, not opt.json_log)
+            end
+            iter = iter + 1
         end
-        if opt.save_every > 0 then
-          checkpoint:saveIteration(counter:get(), epochState, batchOrder, not opt.json_log)
-        end
+        return epochState
+    end -- end local function trainEpoch
 
-      end
-    end
-
-    return epochState
-  end
-
-  local validPpl = 0
-
-  if not opt.json_log then
-    print('Start training...')
-  end
-
-  for epoch = opt.start_epoch, opt.epochs do
-    if not opt.json_log then
-      print('')
-    end
-
-    local epochState = trainEpoch(epoch, validPpl)
-
-    validPpl = eval(model, criterion, validData)
+    local validPpl = 0
 
     if not opt.json_log then
-      print('Validation perplexity: ' .. validPpl)
+        print('Start training...')
     end
 
-    if opt.optim == 'sgd' then
-      optim:updateLearningRate(validPpl, epoch)
+    for epoch = opt.start_epoch, opt.epochs do
+        if not opt.json_log then
+            print('')
+        end
+
+        local epochState = trainEpoch(epoch, validPpl)
+        validPpl = eval(model, criterion, validData)
+        if not opt.json_log then
+            print('Validation perplexity: ' .. validPpl)
+        end
+
+        if opt.optim == 'sgd' then
+            optim:updateLearningRate(validPpl, epoch)
+        end
+
+        checkpoint:saveEpoch(validPpl, epochState, not opt.json_log)
     end
 
-    checkpoint:saveEpoch(validPpl, epochState, not opt.json_log)
-  end
+end -- end local function trainModel
+
+-- ties word embeddings of all encoders to decoder embeddings, and optionally
+-- ties encoder rnns (to each other)
+local function makeVariouslyTiedEncoder(opt, srcDict, decoder, encSharee)
+    local decWordEmb = decoder.inputNet
+    assert(torch.type(decWordEmb) == "nn.LookupTable")
+    local enc = onmt.Models.buildEncoder(opt, dataset.dicts.src)
+    onmt.utils.Cuda.convert(model.decoder) -- share from gpu
+    if opt.brnn then -- reshare both word embeddings
+        assert(torch.type(enc.fwd.inputNet) == "nn.LookupTable")
+        enc.fwd.inputNet:share(decWordEmb, 'weight', 'gradWeight')
+        assert(torch.type(enc.bwd.inputNet) == "nn.LookupTable")
+        enc.bwd.inputNet:share(decWordEmb, 'weight', 'gradWeight')
+        if encSharee then -- share recurrent params with this encoderStates
+            enc.bwd.rnn.net:share(encSharee.fwd.rnn.net, 'weight', 'gradWeight', 'bias', 'gradBias')
+            enc.fwd.rnn.net:share(encSharee.fwd.rnn.net, 'weight', 'gradWeight', 'bias', 'gradBias')
+        else -- just share fwd and bwd within this rnn
+            enc.bwd.rnn.net:share(enc.fwd.rnn.net, 'weight', 'gradWeight', 'bias', 'gradBias')
+        end
+    else
+        assert(torch.type(enc.inputNet) == "nn.LookupTable")
+        enc.inputNet:share(decWordEmb, 'weight', 'gradWeight')
+        if encSharee then
+            enc.rnn.net:share(encSharee.rnn.net, 'weight', 'gradWeight', 'bias', 'gradBias')
+        end
+    end
 end
-
 
 local function main()
   local requiredOptions = {
@@ -479,8 +372,8 @@ local function main()
 
   local dataset = torch.load(opt.data, 'binary', false)
 
-  local trainData = onmt.data.Dataset.new(dataset.train.src, dataset.train.tgt)
-  local validData = onmt.data.Dataset.new(dataset.valid.src, dataset.valid.tgt)
+  local trainData = onmt.data.BoxDataset.new(dataset.train.src, dataset.train.tgt)
+  local validData = onmt.data.BoxDataset.new(dataset.valid.src, dataset.valid.tgt)
 
   trainData:setBatchSize(opt.max_batch_size)
   validData:setBatchSize(opt.max_batch_size)
@@ -492,6 +385,7 @@ local function main()
                         #dataset.dicts.src.features, #dataset.dicts.tgt.features))
     print(string.format(' * maximum sequence length: source = %d; target = %d',
                         trainData.maxSourceLength, trainData.maxTargetLength))
+    print("nSourceRows", trainData.nSourceRows)
     print(string.format(' * number of training sentences: %d', #trainData.src))
     print(string.format(' * maximum batch size: %d', opt.max_batch_size))
   else
@@ -519,33 +413,35 @@ local function main()
     print('Building model...')
   end
 
-  local model
+    local model = {}
 
-  onmt.utils.Parallel.launch(function(idx)
-
-    _G.model = {}
-
+    local verbose = true
     if checkpoint.models then
-      _G.model.encoder = onmt.Models.loadEncoder(checkpoint.models.encoder, idx > 1)
-      _G.model.decoder = onmt.Models.loadDecoder(checkpoint.models.decoder, idx > 1)
+        assert(false) -- this is gonna be annoying
+        for i = 1, trainData.nSourceRows do
+            model["encoder" .. i] = onmt.Models.loadEncoder(checkpoint.models["encoder" .. i], false)
+        end
+        model.decoder = onmt.Models.loadDecoder(checkpoint.models.decoder, false)
     else
-      local verbose = idx == 1 and not opt.json_log
-      _G.model.encoder = onmt.Models.buildEncoder(opt, dataset.dicts.src)
-      _G.model.decoder = onmt.Models.buildDecoder(opt, dataset.dicts.tgt, verbose)
+        -- make decoder first
+        model.decoder = onmt.Models.buildDecoder(opt, dataset.dicts.tgt, verbose)
+        -- send to gpu immediately to make cloning things simpler
+        onmt.utils.Cuda.convert(model.decoder)
+
+        for i = 1, trainData.nSourceRows do
+            --model["encoder" .. i] = onmt.Models.buildEncoder(opt, dataset.dicts.src)
+            local sharee = opt.tie_encoder_rnns and model.encoder1
+            model["encoder" .. i] = makeVariouslyTiedEncoder(opt, dataset.dicts.src, model.decoder, sharee)
+            -- already on gpu
+        end
+
     end
 
-    for _, mod in pairs(_G.model) do
-      onmt.utils.Cuda.convert(mod)
-    end
+    -- for _, mod in pairs(model) do
+    --     onmt.utils.Cuda.convert(mod)
+    -- end
 
-    return idx, _G.model
-  end, function(idx, themodel)
-    if idx == 1 then
-      model = themodel
-    end
-  end)
-
-  trainModel(model, trainData, validData, dataset, checkpoint.info)
+    trainModel(model, trainData, validData, dataset, checkpoint.info)
 end
 
 main()
