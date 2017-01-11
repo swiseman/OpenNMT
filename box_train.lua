@@ -342,8 +342,8 @@ local function makeVariouslyTiedEncoder(opt, srcDict, decoder, encSharee)
     local enc = onmt.Models.buildEncoder(opt, srcDict, nRows, nCols)
     onmt.utils.Cuda.convert(enc) -- share from gpu
     if opt.brnn then -- reshare both word embeddings
-        local encFwdLut = opt.use_posn_feats and enc.fwd.inputNet.net or enc.fwd.inputNet:get(1):get(1)
-        local encBwdLut = opt.use_posn_feats and enc.bwd.inputNet.net or enc.bwd.inputNet:get(1):get(1)
+        local encFwdLut = opt.use_posn_feats and enc.fwd.inputNet:get(1):get(1).net or enc.fwd.inputNet.net
+        local encBwdLut = opt.use_posn_feats and enc.bwd.inputNet:get(1):get(1).net or enc.bwd.inputNet.net
         assert(torch.type(encFwdLut) == "nn.LookupTable")
         encFwdLut:share(decWordEmb.net, 'weight', 'gradWeight')
         assert(torch.type(encBwdLut) == "nn.LookupTable")
@@ -355,7 +355,7 @@ local function makeVariouslyTiedEncoder(opt, srcDict, decoder, encSharee)
             enc.bwd.rnn.net:share(enc.fwd.rnn.net, 'weight', 'gradWeight', 'bias', 'gradBias')
         end
     else
-        local encLut = opt.use_posn_feats and enc.inputNet.net or enc.inputNet:get(1):get(1)
+        local encLut = opt.use_posn_feats and enc.inputNet:get(1):get(1).net or enc.inputNet.net
         assert(torch.type(encLut) == "nn.LookupTable")
         encLut:share(decWordEmb.net, 'weight', 'gradWeight')
         if encSharee then

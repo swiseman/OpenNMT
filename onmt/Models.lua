@@ -74,7 +74,7 @@ end
 local function buildEncoder(opt, dicts, nRows, nCols)
   local inputNetwork, inputSize
   if nRows then
-      inputNetwork, inputSize = buildInputNetworkWithPosns(opt, opt, dicts,
+      inputNetwork, inputSize = buildInputNetworkWithPosns(opt, dicts,
           opt.pre_word_vecs_enc, opt.fix_word_vecs_enc, nRows, nCols)
   else
       inputNetwork, inputSize = buildInputNetwork(opt, dicts, opt.pre_word_vecs_enc, opt.fix_word_vecs_enc)
