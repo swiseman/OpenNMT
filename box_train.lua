@@ -85,6 +85,7 @@ cmd:option('-seed', 3435, [[Seed for random initialization]])
 cmd:option('-json_log', false, [[Outputs logs in JSON format.]])
 
 local opt = cmd:parse(arg)
+print(opt)
 
 local function initParams(model, verbose)
     local numParams = 0
@@ -205,9 +206,7 @@ local function eval(model, criterion, data)
 
   for i = 1, data:batchCount() do
     local batch = onmt.utils.Cuda.convert(data:getBatch(i))
-    --local encoderStates, context = model.encoder:forward(batch)
-    local allEncStates, allCtxs = allEncForward(model, batch)
-    local aggEncStates, catCtx = model.aggregator:forward(allEncStates, allCtxs)
+    local aggEncStates, catCtx = allEncForward(model, batch)
     --loss = loss + model.decoder:computeLoss(batch, encoderStates, context, criterion)
     loss = loss + model.decoder:computeLoss(batch, aggEncStates, catCtx, criterion)
     total = total + batch.targetNonZeros
@@ -290,6 +289,7 @@ local function trainModel(model, trainData, validData, dataset, info)
 
             if iter % opt.report_every == 0 then
                 epochState:log(iter, opt.json_log)
+                collectgarbage()
             end
             if opt.save_every > 0 and iter % opt.save_every == 0 then
                 checkpoint:saveIteration(iter, epochState, batchOrder, not opt.json_log)
@@ -321,6 +321,8 @@ local function trainModel(model, trainData, validData, dataset, info)
         end
 
         checkpoint:saveEpoch(validPpl, epochState, not opt.json_log)
+        collectgarbage()
+        collectgarbage()
     end
 
 end -- end local function trainModel

@@ -66,7 +66,7 @@ function BoxDataset:batchCount()
 end
 
 --[[ Get `Batch` number `idx`. If nil make a batch of all the data. ]]
-function BoxDataset:getBatch(idx, nocache)
+function BoxDataset:getBatch(idx, cache)
   if idx == nil or self.batchRange == nil then
     return onmt.data.BoxBatch.new(self.srcs, self.srcFeatures, self.tgt,
       self.tgtFeatures, self.maxSourceLength)
@@ -74,7 +74,7 @@ function BoxDataset:getBatch(idx, nocache)
 
   local bb = self.cache[idx]
 
-  if not bb or nocache then
+  if not bb or not cache then
       local rangeStart = self.batchRange[idx]["begin"]
       local rangeEnd = self.batchRange[idx]["end"]
 
@@ -103,7 +103,7 @@ function BoxDataset:getBatch(idx, nocache)
       bb = onmt.data.BoxBatch.new(srcs, srcFeatures, tgt, tgtFeatures,
         self.maxSourceLength)
 
-      if not nocache then
+      if cache then
           self.cache[idx] = bb
       end
   end
