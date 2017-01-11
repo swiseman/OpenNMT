@@ -83,6 +83,14 @@ function Aggregator:backward(encGradStatesOut, gradContext, inputFeed)
     return allEncGradOuts, gradCtxs
 end
 
-function Aggregator:postParametersInitialization()
-  self:reset() -- should reset Linears
+-- function Aggregator:postParametersInitialization()
+--   self:reset() -- should reset Linears
+-- end
+
+
+function Aggregator:serialize()
+  return {
+    modules = self.modules,
+    args = {self.nRows}
+  }
 end
