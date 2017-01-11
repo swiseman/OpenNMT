@@ -170,6 +170,7 @@ end
 
 -- gets encodings for all rows
 function allEncForward(model, batch)
+    --for k,v in pairs(model) do print(k) end
     local allEncStates, allCtxs = {}, {}
     for j = 1, batch.sourceInput:size(1) do
         batch:setInputRow(j)
@@ -184,7 +185,7 @@ end
 
 -- goes backward over all encoders
 function allEncBackward(model, batch, encGradStatesOut, gradContext)
-    local allEncGradOuts, gradCtxs = model.aggregator:backward(encGradStatesOut, gradContext)
+    local allEncGradOuts, gradCtxs = model.aggregator:backward(encGradStatesOut, gradContext, opt.input_feed)
     for j = 1, batch.sourceInput:size(1) do
         batch:setInputRow(j)
         model["encoder" .. j]:backward(batch, allEncGradOuts[j], gradCtxs[j])
@@ -275,8 +276,9 @@ local function trainModel(model, trainData, validData, dataset, info)
 
             optim:zeroGrad(gradParams)
             local aggEncStates, catCtx = allEncForward(model, batch)
+            local ctxLen = catCtx:size(2)
             local decOutputs = model.decoder:forward(batch, aggEncStates, catCtx)
-            local encGradStatesOut, gradContext, loss = model.decoder:backward(batch, decOutputs, criterion)
+            local encGradStatesOut, gradContext, loss = model.decoder:backward(batch, decOutputs, criterion, ctxLen)
             allEncBackward(model, batch, encGradStatesOut, gradContext)
 
             -- Update the parameters.
@@ -325,27 +327,28 @@ end -- end local function trainModel
 -- ties encoder rnns (to each other)
 local function makeVariouslyTiedEncoder(opt, srcDict, decoder, encSharee)
     local decWordEmb = decoder.inputNet
-    assert(torch.type(decWordEmb) == "nn.LookupTable")
-    local enc = onmt.Models.buildEncoder(opt, dataset.dicts.src)
-    onmt.utils.Cuda.convert(model.decoder) -- share from gpu
+    assert(torch.type(decWordEmb) == "onmt.WordEmbedding")
+    local enc = onmt.Models.buildEncoder(opt, srcDict)
+    onmt.utils.Cuda.convert(enc) -- share from gpu
     if opt.brnn then -- reshare both word embeddings
-        assert(torch.type(enc.fwd.inputNet) == "nn.LookupTable")
-        enc.fwd.inputNet:share(decWordEmb, 'weight', 'gradWeight')
-        assert(torch.type(enc.bwd.inputNet) == "nn.LookupTable")
-        enc.bwd.inputNet:share(decWordEmb, 'weight', 'gradWeight')
-        if encSharee then -- share recurrent params with this encoderStates
+        assert(torch.type(enc.fwd.inputNet) == "onmt.WordEmbedding")
+        enc.fwd.inputNet.net:share(decWordEmb.net, 'weight', 'gradWeight')
+        assert(torch.type(enc.bwd.inputNet) == "onmt.WordEmbedding")
+        enc.bwd.inputNet.net:share(decWordEmb.net, 'weight', 'gradWeight')
+        if encSharee then -- share recurrent params with this encoder
             enc.bwd.rnn.net:share(encSharee.fwd.rnn.net, 'weight', 'gradWeight', 'bias', 'gradBias')
             enc.fwd.rnn.net:share(encSharee.fwd.rnn.net, 'weight', 'gradWeight', 'bias', 'gradBias')
         else -- just share fwd and bwd within this rnn
             enc.bwd.rnn.net:share(enc.fwd.rnn.net, 'weight', 'gradWeight', 'bias', 'gradBias')
         end
     else
-        assert(torch.type(enc.inputNet) == "nn.LookupTable")
-        enc.inputNet:share(decWordEmb, 'weight', 'gradWeight')
+        assert(torch.type(enc.inputNet) == "onmt.WordEmbedding")
+        enc.inputNet.net:share(decWordEmb.net, 'weight', 'gradWeight')
         if encSharee then
             enc.rnn.net:share(encSharee.rnn.net, 'weight', 'gradWeight', 'bias', 'gradBias')
         end
     end
+    return enc
 end
 
 local function main()
@@ -416,7 +419,7 @@ local function main()
     print(string.format(' * maximum sequence length: source = %d; target = %d',
                         trainData.maxSourceLength, trainData.maxTargetLength))
     print("nSourceRows", trainData.nSourceRows)
-    print(string.format(' * number of training sentences: %d', #trainData.src))
+    print(string.format(' * number of training instances: %d', #trainData.tgt))
     print(string.format(' * maximum batch size: %d', opt.max_batch_size))
   else
     local metadata = {
@@ -433,7 +436,7 @@ local function main()
         source = trainData.maxSourceLength,
         target = trainData.maxTargetLength
       },
-      trainingSentences = #trainData.src
+      trainingSentences = #trainData.tgt
     }
 
     onmt.utils.Log.logJson(metadata)

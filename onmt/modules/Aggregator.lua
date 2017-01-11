@@ -60,12 +60,13 @@ end
 
 -- encGradStatesOut is an nLayers-length table;
 -- gradContext sho
-function Aggregator:backward(encGradStatesOut, gradContext)
+function Aggregator:backward(encGradStatesOut, gradContext, inputFeed)
     local allEncGradOuts = {}
     for j = 1, self.nRows do
         allEncGradOuts[j] = {}
     end
-    for i = 1, #encGradStatesOut do
+    local ifOffset = inputFeed == 1 and 1 or 0
+    for i = 1, #encGradStatesOut - ifOffset do
         local gradIns = self.layerClones[i]:backward(self.layInputs[i], encGradStatesOut[i])
         for j = 1, self.nRows do
             table.insert(allEncGradOuts[j], gradIns[j])

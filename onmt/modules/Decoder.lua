@@ -312,7 +312,7 @@ Parameters:
   Note: This code runs both the standard backward and criterion forward/backward.
   It returns both the gradInputs and the loss.
   -- ]]
-function Decoder:backward(batch, outputs, criterion)
+function Decoder:backward(batch, outputs, criterion, ctxLen)
   if self.gradOutputsProto == nil then
     self.gradOutputsProto = onmt.utils.Tensor.initTensorTable(self.args.numEffectiveLayers + 1,
                                                               self.gradOutputProto,
@@ -322,7 +322,7 @@ function Decoder:backward(batch, outputs, criterion)
   local gradStatesInput = onmt.utils.Tensor.reuseTensorTable(self.gradOutputsProto,
                                                              { batch.size, self.args.rnnSize })
   local gradContextInput = onmt.utils.Tensor.reuseTensor(self.gradContextProto,
-                                                         { batch.size, batch.sourceLength, self.args.rnnSize })
+                                                         { batch.size, ctxLen, self.args.rnnSize })
 
   local loss = 0
 
@@ -348,6 +348,11 @@ function Decoder:backward(batch, outputs, criterion)
     local gradInput = self:net(t):backward(self.inputs[t], gradStatesInput)
 
     -- Accumulate encoder output gradients.
+    -- print("oy")
+    -- print(gradContextInput:size())
+    -- print(gradInput)
+    -- print(self.args.inputIndex.context)
+    -- print(gradInput[self.args.inputIndex.context]:size())
     gradContextInput:add(gradInput[self.args.inputIndex.context])
     gradStatesInput[#gradStatesInput]:zero()
 

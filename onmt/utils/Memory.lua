@@ -71,9 +71,10 @@ function Memory.boxOptimize(model, nSourceRows, criterion, batch, verbose)
 
   -- Initialize all intermediate tensors with a first batch.
   local aggEncStates, catCtx = allEncForward(model, batch)
+  local ctxLen = catCtx:size(2)
   local decOutputs = model.decoder:forward(batch, aggEncStates, catCtx)
   decOutputs = onmt.utils.Tensor.recursiveClone(decOutputs)
-  local encGradStatesOut, gradContext, loss = model.decoder:backward(batch, decOutputs, criterion)
+  local encGradStatesOut, gradContext, loss = model.decoder:backward(batch, decOutputs, criterion, ctxLen)
   allEncBackward(model, batch, encGradStatesOut, gradContext)
 
   -- mark shared tensors
