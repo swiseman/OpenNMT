@@ -62,10 +62,10 @@ function EpochState:log(batchIndex, json)
 
     local stats = ''
     stats = stats .. string.format('Epoch %d ; ', self.epoch)
-    stats = stats .. string.format('Iteration %d/%d ; ', batchIndex, self.numIterations)
-    stats = stats .. string.format('Learning rate %.4f ; ', self.learningRate)
-    stats = stats .. string.format('Source tokens/s %d ; ', self.numWordsSource / timeTaken)
-    stats = stats .. string.format('Perplexity %.2f', self:getTrainPpl())
+    stats = stats .. string.format('Iter %d/%d ; ', batchIndex, self.numIterations)
+    stats = stats .. string.format('LR %.4f ; ', self.learningRate)
+    stats = stats .. string.format('Target tokens/s %d ; ', self.numWordsTarget / timeTaken)
+    stats = stats .. string.format('PPL %.2f', self:getTrainPpl())
     print(stats)
   end
 end

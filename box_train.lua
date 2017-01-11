@@ -72,6 +72,8 @@ cmd:text("")
 
 -- GPU
 cmd:option('-gpuid', 0, [[1-based identifier of the GPU to use. CPU is used when the option is < 1]])
+cmd:option('-nparallel', 1, [[When using GPUs, how many batches to execute in parallel.
+                            Note: this will technically change the final batch size to max_batch_size*nparallel.]])
 cmd:option('-disable_mem_optimization', false, [[Disable sharing internal of internal buffers between clones - which is in general safe,
                                                 except if you want to look inside clones for visualization purpose for instance.]])
 
@@ -282,8 +284,8 @@ local function trainModel(model, trainData, validData, dataset, info)
             allEncBackward(model, batch, encGradStatesOut, gradContext)
 
             -- Update the parameters.
-            optim:prepareGrad(gradParams[1], opt.max_grad_norm)
-            optim:updateParams(params[1], gradParams[1])
+            optim:prepareGrad(gradParams, opt.max_grad_norm)
+            optim:updateParams(params, gradParams)
             epochState:update(batch, loss)
 
             if iter % opt.report_every == 0 then
