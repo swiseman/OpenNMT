@@ -4,10 +4,11 @@ local BoxDataset = torch.class("BoxDataset")
 --[[ Initialize a data object given aligned tables of IntTensors `srcData`
   and `tgtData`.
 --]]
-function BoxDataset:__init(srcData, tgtData)
+function BoxDataset:__init(srcData, tgtData, usePosnFeats)
 
   self.srcs = srcData.words
   self.srcFeatures = srcData.features
+  self.usePosnFeats = usePosnFeats
 
   if tgtData ~= nil then
     self.tgt = tgtData.words
@@ -17,6 +18,10 @@ function BoxDataset:__init(srcData, tgtData)
   self.maxSourceLength = self.srcs[1][1]:size(1)
   self.nSourceRows = #self.srcs
   self.cache = {} -- stores batches
+  if usePosnFeats then
+      self.rowFeats = torch.range(1, self.nSourceRows):long():view(-1, 1) -- need nRows*batchsize tensor for this
+      self.colFeats = torch.range(1, self.maxSourceLength):long():view(-1, 1) -- need srcLen*batchSize tensor for this
+  end
 end
 
 --[[ Setup up the training data to respect `maxBatchSize`. ]]
@@ -100,8 +105,15 @@ function BoxDataset:getBatch(idx, cache)
         end
       end
 
+      local batchRowFeats, batchColFeats
+      if self.usePosnFeats then
+          local size = #tgt
+          batchRowFeats = self.rowFeats:expand(self.rowFeats:size(1), size)
+          batchColFeats = self.colFeats:expand(self.colFeats:size(1), size)
+      end
+
       bb = onmt.data.BoxBatch.new(srcs, srcFeatures, tgt, tgtFeatures,
-        self.maxSourceLength)
+        self.maxSourceLength, batchRowFeats, batchColFeats)
 
       if cache then
           self.cache[idx] = bb

@@ -39,8 +39,46 @@ local function buildInputNetwork(opt, dicts, pretrainedWords, fixWords)
   return inputNetwork, inputSize
 end
 
-local function buildEncoder(opt, dicts)
-  local inputNetwork, inputSize = buildInputNetwork(opt, dicts, opt.pre_word_vecs_enc, opt.fix_word_vecs_enc)
+  -- this just assumes we have posn feats
+local function buildInputNetworkWithPosns(opt, dicts, pretrainedWords, fixWords,
+     nRows, nCols)
+  local wordEmbedding = onmt.WordEmbedding.new(dicts.words:size(), -- vocab size
+                                               opt.word_vec_size,
+                                               pretrainedWords,
+                                               fixWords)
+
+  if opt.feat_merge == "sum" then
+      opt.feat_vec_size = opt.word_vec_size
+  end
+  local rowLut = nn.LookupTable(nRows, opt.feat_vec_size)
+  local colLut = nn.LookupTable(nCols, opt.feat_vec_size)
+
+  local inputs = nn.Sequential()
+     :add(nn.ParallelTable()
+       :add(wordEmbedding)
+       :add(rowLut)
+       :add(colLut))
+
+  local inputSize
+  if opt.feat_merge == "sum" then
+      inputs:add(nn.CAddTable())
+      inputSize = opt.feat_vec_size
+  else
+      inputs:add(nn.JoinTable(2))
+      inputSize = opt.word_vec_size + 2*opt.feat_vec_size
+  end
+
+  return inputs, inputSize
+end
+
+local function buildEncoder(opt, dicts, nRows, nCols)
+  local inputNetwork, inputSize
+  if nRows then
+      inputNetwork, inputSize = buildInputNetworkWithPosns(opt, opt, dicts,
+          opt.pre_word_vecs_enc, opt.fix_word_vecs_enc, nRows, nCols)
+  else
+      inputNetwork, inputSize = buildInputNetwork(opt, dicts, opt.pre_word_vecs_enc, opt.fix_word_vecs_enc)
+  end
 
   if opt.brnn then
     -- Compute rnn hidden size depending on hidden states merge action.

@@ -29,7 +29,7 @@ cmd:option('-tgt_seq_length', 50, [[Maximum target sequence length]])
 cmd:option('-shuffle', 1, [[Shuffle data]])
 cmd:option('-seed', 3435, [[Random seed]])
 
-cmd:optione('-players_per_team', 13, [[]])
+cmd:option('-players_per_team', 13, [[]])
 
 cmd:option('-report_every', 100000, [[Report status every this many sentences]])
 

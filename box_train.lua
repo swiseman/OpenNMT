@@ -53,7 +53,7 @@ cmd:option('-max_grad_norm', 5, [[If the norm of the gradient vector exceeds thi
 cmd:option('-dropout', 0.3, [[Dropout probability. Dropout is applied between vertical LSTM stacks.]])
 cmd:option('-learning_rate_decay', 0.5, [[Decay learning rate by this much if (i) perplexity does not decrease
                                         on the validation set or (ii) epoch has gone past the start_decay_at_limit]])
-cmd:option('-start_decay_at', 9, [[Start decay after this epoch]])
+cmd:option('-start_decay_at', 10000, [[Start decay after this epoch]])
 cmd:option('-curriculum', 0, [[For this many epochs, order the minibatches based on source
                              sequence length. Sometimes setting this to 1 will increase convergence speed.]])
 cmd:option('-pre_word_vecs_enc', '', [[If a valid path is specified, then this will load
@@ -64,7 +64,10 @@ cmd:option('-pre_word_vecs_dec', '', [[If a valid path is specified, then this w
                                      See README for specific formatting instructions.]])
 cmd:option('-fix_word_vecs_enc', false, [[Fix word embeddings on the encoder side]])
 cmd:option('-fix_word_vecs_dec', false, [[Fix word embeddings on the decoder side]])
+
+
 cmd:option('-tie_encoder_rnns', false, [[Tie all encoder rnns]])
+cmd:option('-use_posn_feats', false, [[Use positional features]])
 
 cmd:text("")
 cmd:text("**Other options**")
@@ -332,13 +335,19 @@ end -- end local function trainModel
 local function makeVariouslyTiedEncoder(opt, srcDict, decoder, encSharee)
     local decWordEmb = decoder.inputNet
     assert(torch.type(decWordEmb) == "onmt.WordEmbedding")
-    local enc = onmt.Models.buildEncoder(opt, srcDict)
+    local nRows, nCols
+    if opt.use_posn_feats then
+        nRows, nCols = g_nRows, g_nCols
+    end
+    local enc = onmt.Models.buildEncoder(opt, srcDict, nRows, nCols)
     onmt.utils.Cuda.convert(enc) -- share from gpu
     if opt.brnn then -- reshare both word embeddings
-        assert(torch.type(enc.fwd.inputNet) == "onmt.WordEmbedding")
-        enc.fwd.inputNet.net:share(decWordEmb.net, 'weight', 'gradWeight')
-        assert(torch.type(enc.bwd.inputNet) == "onmt.WordEmbedding")
-        enc.bwd.inputNet.net:share(decWordEmb.net, 'weight', 'gradWeight')
+        local encFwdLut = opt.use_posn_feats and enc.fwd.inputNet.net or enc.fwd.inputNet:get(1):get(1)
+        local encBwdLut = opt.use_posn_feats and enc.bwd.inputNet.net or enc.bwd.inputNet:get(1):get(1)
+        assert(torch.type(encFwdLut) == "nn.LookupTable")
+        encFwdLut:share(decWordEmb.net, 'weight', 'gradWeight')
+        assert(torch.type(encBwdLut) == "nn.LookupTable")
+        encBwdLut:share(decWordEmb.net, 'weight', 'gradWeight')
         if encSharee then -- share recurrent params with this encoder
             enc.bwd.rnn.net:share(encSharee.fwd.rnn.net, 'weight', 'gradWeight', 'bias', 'gradBias')
             enc.fwd.rnn.net:share(encSharee.fwd.rnn.net, 'weight', 'gradWeight', 'bias', 'gradBias')
@@ -346,8 +355,9 @@ local function makeVariouslyTiedEncoder(opt, srcDict, decoder, encSharee)
             enc.bwd.rnn.net:share(enc.fwd.rnn.net, 'weight', 'gradWeight', 'bias', 'gradBias')
         end
     else
-        assert(torch.type(enc.inputNet) == "onmt.WordEmbedding")
-        enc.inputNet.net:share(decWordEmb.net, 'weight', 'gradWeight')
+        local encLut = opt.use_posn_feats and enc.inputNet.net or enc.inputNet:get(1):get(1)
+        assert(torch.type(encLut) == "nn.LookupTable")
+        encLut:share(decWordEmb.net, 'weight', 'gradWeight')
         if encSharee then
             enc.rnn.net:share(encSharee.rnn.net, 'weight', 'gradWeight', 'bias', 'gradBias')
         end
@@ -409,11 +419,15 @@ local function main()
 
   local dataset = torch.load(opt.data, 'binary', false)
 
-  local trainData = onmt.data.BoxDataset.new(dataset.train.src, dataset.train.tgt)
-  local validData = onmt.data.BoxDataset.new(dataset.valid.src, dataset.valid.tgt)
+  local trainData = onmt.data.BoxDataset.new(dataset.train.src, dataset.train.tgt, opt.use_posn_feats)
+  local validData = onmt.data.BoxDataset.new(dataset.valid.src, dataset.valid.tgt, opt.use_posn_feats)
 
   trainData:setBatchSize(opt.max_batch_size)
   validData:setBatchSize(opt.max_batch_size)
+
+  -- just gonna hack for now
+  g_nRows = trainData.nSourceRows
+  g_nCols = 21
 
   if not opt.json_log then
     print(string.format(' * vocabulary size: source = %d; target = %d',

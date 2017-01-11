@@ -57,7 +57,8 @@ Parameters:
   * `tgt` - 2D table of target batch indices
   * `tgtFeatures` - 2D table of target batch features (opt)
 --]]
-function BoxBatch:__init(srcs, srcFeatures, tgt, tgtFeatures, bsLen)
+function BoxBatch:__init(srcs, srcFeatures, tgt, tgtFeatures, bsLen,
+  batchRowFeats, batchColFeats)
   local srcs = srcs or {}
   local srcFeatures = srcFeatures or {}
   local tgtFeatures = tgtFeatures or {}
@@ -69,6 +70,8 @@ function BoxBatch:__init(srcs, srcFeatures, tgt, tgtFeatures, bsLen)
   self.size = #tgt
 
   self.sourceLength = bsLen
+  self.batchRowFeats = batchRowFeats
+  self.batchColFeats = batchColFeats
   self.inputRow = nil
   --self.sourceLength, self.sourceSize = getLength(src)
 
@@ -222,10 +225,14 @@ function BoxBatch:getSourceInput(t)
   -- If a regular input, return word id, otherwise a table with features.
   local inputs = self.sourceInput[self.inputRow][t]
 
-  if #self.sourceInputFeatures > 0 then
-    inputs = { inputs }
-    addInputFeatures(inputs, self.sourceInputFeatures, t)
+  if self.batchRowFeats then
+      inputs = {inputs, self.batchRowFeats[self.inputRow], self.batchColFeats[t]}
   end
+
+  -- if #self.sourceInputFeatures > 0 then
+  --   inputs = { inputs }
+  --   addInputFeatures(inputs, self.sourceInputFeatures, t)
+  -- end
 
   return inputs
 end
