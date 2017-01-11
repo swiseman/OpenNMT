@@ -319,6 +319,7 @@ function Decoder:backward(batch, outputs, criterion, ctxLen)
                                                               { batch.size, self.args.rnnSize })
   end
 
+  local ctxLen = ctxLen or batch.sourceLength -- for back compat
   local gradStatesInput = onmt.utils.Tensor.reuseTensorTable(self.gradOutputsProto,
                                                              { batch.size, self.args.rnnSize })
   local gradContextInput = onmt.utils.Tensor.reuseTensor(self.gradContextProto,
