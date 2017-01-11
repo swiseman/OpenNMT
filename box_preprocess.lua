@@ -29,6 +29,8 @@ cmd:option('-tgt_seq_length', 50, [[Maximum target sequence length]])
 cmd:option('-shuffle', 1, [[Shuffle data]])
 cmd:option('-seed', 3435, [[Random seed]])
 
+cmd:optione('-players_per_team', 13, [[]])
+
 cmd:option('-report_every', 100000, [[Report status every this many sentences]])
 
 local opt = cmd:parse(arg)
@@ -69,8 +71,6 @@ local function makeVocabulary(jsondat, size)
       wordVocab:add(game.vis_name)
       wordVocab:add(game.vis_city)
   end
-
-
 
   -- local reader = onmt.utils.FileReader.new(filename)
   --
@@ -216,9 +216,10 @@ local function makeData(jsondat, srcDicts, tgtDicts)
        "DREB", "REB", "AST", "TO", "STL", "BLK", "PF"}
   local ls_keys = {"PTS_QTR1", "PTS_QTR2", "PTS_QTR3", "PTS_QTR4", "PTS",
      "FG_PCT", "FG3_PCT", "FT_PCT", "REB", "AST", "TOV", "TEAM_WINS_LOSSES"}
+  local players_per_team = opt.players_per_team
   -- i guess make a src for each row
   local srcs = {}
-  for i = 1, 28 do -- 2*13 players + 2*1 teams
+  for i = 1, 2*players_per_team+2 do -- 2 teams
       table.insert(srcs, tds.Vec())
   end
   local srcFeatures = tds.Vec()
@@ -233,7 +234,7 @@ local function makeData(jsondat, srcDicts, tgtDicts)
 
   -- local srcReader = onmt.utils.FileReader.new(srcFile)
   -- local tgtReader = onmt.utils.FileReader.new(tgtFile)
-  local players_per_team = 13 -- just stipulating this; can't be more or less
+
 
   for i = 1, #jsondat do
     -- local srcTokens = srcReader:next()
@@ -306,10 +307,10 @@ local function makeData(jsondat, srcDicts, tgtDicts)
       assert(#vis_src == srcs[1][1]:size(1))
       local idxs = srcDicts.words:convertToIdx(home_src, onmt.Constants.UNK_WORD)
       assert(idxs:dim() > 0)
-      srcs[27]:insert(idxs)
+      srcs[2*players_per_team+1]:insert(idxs)
       idxs = srcDicts.words:convertToIdx(vis_src, onmt.Constants.UNK_WORD)
       assert(idxs:dim() > 0)
-      srcs[28]:insert(idxs)
+      srcs[2*players_per_team+2]:insert(idxs)
 
 
       --src:insert(srcDicts.words:convertToIdx(srcWords, onmt.Constants.UNK_WORD))
