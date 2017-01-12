@@ -237,6 +237,11 @@ function BoxBatch:getSourceInput(t)
   return inputs
 end
 
+-- returns a nRows*srcLen x batchSize tensor
+function BoxBatch:getFlatSource()
+    return self.sourceInput:view(-1, self.size)
+end
+
 --[[ Get target input batch at timestep `t`. --]]
 function BoxBatch:getTargetInput(t)
   -- If a regular input, return word id, otherwise a table with features.
