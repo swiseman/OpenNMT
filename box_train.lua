@@ -312,6 +312,7 @@ local function trainModel(model, trainData, validData, dataset, info)
 
     local validPpl = 0
     local bestPpl = math.huge
+    local bestEpoch = -1
 
     if not opt.json_log then
         print('Start training...')
@@ -333,8 +334,10 @@ local function trainModel(model, trainData, validData, dataset, info)
         end
 
         if validPpl < bestPpl then
-            bestPpl = validPpl
+            checkpoint:deleteEpoch(bestPpl, bestEpoch)
             checkpoint:saveEpoch(validPpl, epochState, not opt.json_log)
+            bestPpl = validPpl
+            bestEpoch = epoch
         end
         collectgarbage()
         collectgarbage()

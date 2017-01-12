@@ -72,38 +72,6 @@ local function makeVocabulary(jsondat, size)
       wordVocab:add(game.vis_city)
   end
 
-  -- local reader = onmt.utils.FileReader.new(filename)
-  --
-  -- while true do
-  --   local sent = reader:next()
-  --   if sent == nil then
-  --     break
-  --   end
-  --
-  --   local words, features, numFeatures = onmt.utils.Features.extract(sent)
-  --
-  --   if #featuresVocabs == 0 and numFeatures > 0 then
-  --     for j = 1, numFeatures do
-  --       featuresVocabs[j] = onmt.utils.Dict.new({onmt.Constants.PAD_WORD, onmt.Constants.UNK_WORD,
-  --                                                onmt.Constants.BOS_WORD, onmt.Constants.EOS_WORD})
-  --     end
-  --   else
-  --     assert(#featuresVocabs == numFeatures,
-  --            'all sentences must have the same numbers of additional features')
-  --   end
-  --
-  --   for i = 1, #words do
-  --     wordVocab:add(words[i])
-  --
-  --     for j = 1, numFeatures do
-  --       featuresVocabs[j]:add(features[j][i])
-  --     end
-  --   end
-  --
-  -- end
-  --
-  -- reader:close()
-
   local originalSize = wordVocab:size()
   wordVocab = wordVocab:prune(size)
   print('Created dictionary of size ' .. wordVocab:size() .. ' (pruned from ' .. originalSize .. ')')
@@ -193,18 +161,22 @@ local function get_player_idxs(game, max_per_team)
         nplayers = nplayers + 1
     end
 
+    local num_home, num_vis = 0, 0
     for i = 1, nplayers do
         local player_city = game.box_score.TEAM_CITY[tostring(i-1)]
         if player_city == game.home_city then
             if #home_players < max_per_team then
                 table.insert(home_players, tostring(i-1))
+                num_home = num_home + 1
             end
         else
             if #vis_players < max_per_team then
                 table.insert(vis_players, tostring(i-1))
+                num_vis = num_vis + 1
             end
         end
     end
+    print("adding", num_home, num_vis, "players")
     return home_players, vis_players
 end
 
@@ -270,20 +242,6 @@ local function makeData(jsondat, srcDicts, tgtDicts)
               srcs[(ii-1)*players_per_team+j]:insert(idxs)
           end
       end
-    --   for j = 1, 26 do
-    --       local src_j = {}
-    --       for k, key in ipairs(bs_keys) do
-    --           print(key, game.box_score[key][tostring(j-1)])
-    --           table.insert(src_j, game.box_score[key][tostring(j-1)])
-    --       end
-    --       local idxs = srcDicts.words:convertToIdx(src_j, onmt.Constants.UNK_WORD)
-    --       if idxs:dim() == 0 then
-    --           print(game.box_score["TO"])
-    --           --print(game.box_score)
-    --       end
-    --       assert(idxs:dim() > 0)
-    --       srcs[j]:insert(idxs)
-    --   end
 
       -- make line scores the same size as box scores by pre-padding
       local home_src, vis_src = {}, {}

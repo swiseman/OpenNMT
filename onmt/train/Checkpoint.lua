@@ -63,4 +63,9 @@ function Checkpoint:saveEpoch(validPpl, epochState, verbose)
   self:save(filePath, info)
 end
 
+function Checkpoint:deleteEpoch(validPpl, epoch)
+  local filePath = string.format('%s_epoch%d_%.2f.t7', self.savePath, epoch, validPpl)
+  os.remove(filePath)
+end
+
 return Checkpoint
