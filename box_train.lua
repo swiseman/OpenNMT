@@ -35,7 +35,7 @@ cmd:option('-input_feed', 1, [[Feed the context vector at each time step as addi
 cmd:option('-residual', false, [[Add residual connections between RNN layers.]])
 cmd:option('-brnn', false, [[Use a bidirectional encoder]])
 cmd:option('-brnn_merge', 'sum', [[Merge action for the bidirectional hidden states: concat or sum]])
-cmd:optione('-just_lm', false, [[No conditioning]])
+cmd:option('-just_lm', false, [[No conditioning]])
 
 cmd:text("")
 cmd:text("**Optimization options**")
@@ -311,6 +311,7 @@ local function trainModel(model, trainData, validData, dataset, info)
     end -- end local function trainEpoch
 
     local validPpl = 0
+    local bestPpl = math.huge
 
     if not opt.json_log then
         print('Start training...')
@@ -331,7 +332,10 @@ local function trainModel(model, trainData, validData, dataset, info)
             optim:updateLearningRate(validPpl, epoch)
         end
 
-        checkpoint:saveEpoch(validPpl, epochState, not opt.json_log)
+        if validPpl < bestPpl then
+            bestPpl = validPpl
+            checkpoint:saveEpoch(validPpl, epochState, not opt.json_log)
+        end
         collectgarbage()
         collectgarbage()
     end
