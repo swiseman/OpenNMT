@@ -35,6 +35,7 @@ cmd:option('-input_feed', 1, [[Feed the context vector at each time step as addi
 cmd:option('-residual', false, [[Add residual connections between RNN layers.]])
 cmd:option('-brnn', false, [[Use a bidirectional encoder]])
 cmd:option('-brnn_merge', 'sum', [[Merge action for the bidirectional hidden states: concat or sum]])
+cmd:optione('-just_lm', false, [[No conditioning]])
 
 cmd:text("")
 cmd:text("**Optimization options**")
@@ -186,6 +187,12 @@ function allEncForward(model, batch)
     end
     batch:setInputRow(nil) -- for sanity
     local aggEncStates, catCtx = model.aggregator:forward(allEncStates, allCtxs)
+    if opt.just_lm then
+        for i = 1, #aggEncStates do
+            aggEncStates[i]:zero()
+        end
+        catCtx:zero()
+    end
     return aggEncStates, catCtx
 end
 
@@ -281,6 +288,7 @@ local function trainModel(model, trainData, validData, dataset, info)
             optim:zeroGrad(gradParams)
             local aggEncStates, catCtx = allEncForward(model, batch)
             local ctxLen = catCtx:size(2)
+
             local decOutputs = model.decoder:forward(batch, aggEncStates, catCtx)
             local encGradStatesOut, gradContext, loss = model.decoder:backward(batch, decOutputs, criterion, ctxLen)
             allEncBackward(model, batch, encGradStatesOut, gradContext)
