@@ -62,11 +62,12 @@ function Optim:__init(args)
   self.method = args.method
   self.learningRate = args.learningRate
 
-  if self.method == 'sgd' then
+  if self.method == 'sgd' or self.method == 'mom' then
     self.learningRateDecay = args.learningRateDecay
     self.startDecay = false
     self.startDecayAt = args.startDecayAt
-  else
+  end
+  if self.method ~= 'sgd' then
     if args.optimStates ~= nil then
       self.optimStates = args.optimStates
     else

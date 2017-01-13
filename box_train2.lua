@@ -312,7 +312,7 @@ local function trainModel(model, trainData, validData, dataset, info)
             print('Validation perplexity: ' .. validPpl)
         end
 
-        if opt.optim == 'sgd' then
+        if opt.optim == 'sgd' or opt.optim == 'mom' then
             optim:updateLearningRate(validPpl, epoch)
         end
 

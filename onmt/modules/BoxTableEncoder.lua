@@ -73,14 +73,14 @@ function BoxTableEncoder:_buildModel()
     local ctx = nn.View(-1, args.nRows*args.nCols, args.encDim)(featEmbs)
 
     -- for now let's assume we also want row-wise summaries
-    local byRows = nn.View(-1, args.nRows, args.nCols, args.encDim)(featEmbs)
+    local byRows = nn.View(-1, args.nCols, args.encDim)(featEmbs) -- batchSize*nRows x nCols x dim
     if args.pool == "mean" then
-        byRows = nn.Mean(3)(byRows)
+        byRows = nn.Mean(2)(byRows)
     else
-        byRows = nn.Max(3)(byRows)
+        byRows = nn.Max(2)(byRows)
     end
-    -- byRows is now batchSize x nRows x encDim
-    local flattenedByRows = nn.View(-1, args.nRows*args.encDim)(byRows)
+    -- byRows is now batchSize*nRows x dim
+    local flattenedByRows = nn.View(-1, args.nRows*args.encDim)(byRows) -- batchSize x nRows*dim
 
     -- finally need to make something that can be copied into an lstm
     self.transforms = {}
