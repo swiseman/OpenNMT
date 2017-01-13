@@ -16,5 +16,6 @@ require('onmt.modules.Generator')
 require('onmt.modules.FeaturesGenerator')
 
 require('onmt.modules.Aggregator')
+require('onmt.modules.BoxTableEncoder')
 
 return onmt
