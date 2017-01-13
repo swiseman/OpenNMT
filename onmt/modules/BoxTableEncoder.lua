@@ -62,7 +62,7 @@ function BoxTableEncoder:_buildModel()
     -- featEmbs are batchSize*nRows*nCols x encDim
 
     for i = 2, args.nLayers do
-        featEmbs = nn.Tanh()(nn.Linear(encDim, encDim)(featEmbs))
+        featEmbs = nn.Tanh()(nn.Linear(args.encDim, args.encDim)(featEmbs))
     end
 
     if args.dropout and args.dropout > 0 then

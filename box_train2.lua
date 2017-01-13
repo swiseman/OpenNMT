@@ -45,10 +45,11 @@ cmd:option('-epochs', 13, [[Number of training epochs]])
 cmd:option('-start_epoch', 1, [[If loading from a checkpoint, the epoch from which to start]])
 cmd:option('-start_iteration', 1, [[If loading from a checkpoint, the iteration from which to start]])
 cmd:option('-param_init', 0.1, [[Parameters are initialized over uniform distribution with support (-param_init, param_init)]])
-cmd:option('-optim', 'sgd', [[Optimization method. Possible options are: sgd, adagrad, adadelta, adam]])
+cmd:option('-optim', 'sgd', [[Optimization method. Possible options are: sgd, adagrad, adadelta, adam, mom]])
 cmd:option('-learning_rate', 1, [[Starting learning rate. If adagrad/adadelta/adam is used,
                                 then this is the global learning rate. Recommended settings are: sgd = 1,
                                 adagrad = 0.1, adadelta = 1, adam = 0.0002]])
+cmd:option('-mom', 0.9, [[momentum]])
 cmd:option('-max_grad_norm', 5, [[If the norm of the gradient vector exceeds this renormalize it to have the norm equal to max_grad_norm]])
 cmd:option('-dropout', 0.3, [[Dropout probability. Dropout is applied between vertical LSTM stacks.]])
 cmd:option('-learning_rate_decay', 0.5, [[Decay learning rate by this much if (i) perplexity does not decrease
@@ -236,7 +237,8 @@ local function trainModel(model, trainData, validData, dataset, info)
         learningRate = opt.learning_rate,
         learningRateDecay = opt.learning_rate_decay,
         startDecayAt = opt.start_decay_at,
-        optimStates = opt.optim_states
+        optimStates = opt.optim_states,
+        mom = opt.mom
     })
 
     local checkpoint = onmt.train.Checkpoint.new(opt, model, optim, dataset)
@@ -391,6 +393,7 @@ local function main()
   print("USING HACKY GLOBALS!!!",
     string.format("regRows: %d; specPadding: %d; nCols: %d; nFeats: %d",
     g_nRegRows, g_specPadding, g_nCols, g_nFeatures))
+  print("")
 
   local colStartIdx = dataset.dicts.src.words:size()+1 -- N.B. order is crucial
   for i = 1, g_nCols*2+2 do -- column names for reg and spec, plus home/away features

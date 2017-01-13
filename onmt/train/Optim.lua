@@ -9,6 +9,14 @@ local function adagradStep(dfdx, lr, state)
   dfdx:cdiv(state.std:add(1e-10)):mul(-lr)
 end
 
+local function momStep(dfdx, lr, state)
+    state.v = state.v or dfdx:clone()
+    state.v:mul(state.mom):add(1-state.mom, dfdx)
+    -- this is annoying and unnecessary, but to be consistent w/ the stupid
+    -- api below we have to copy back into dfdx and scale it
+    dfdx:copy(state.v):mul(-lr)
+end
+
 local function adamStep(dfdx, lr, state)
   local beta1 = state.beta1 or 0.9
   local beta2 = state.beta2 or 0.999
@@ -65,6 +73,9 @@ function Optim:__init(args)
       self.optimStates = {}
       for j = 1, args.numModels do
         self.optimStates[j] = {}
+        if args.mom then
+            self.optimStates[j].mom = args.mom
+        end
       end
     end
   end
@@ -99,6 +110,8 @@ function Optim:prepareGrad(gradParams, maxGradNorm)
       adadeltaStep(gradParams[j], self.learningRate, self.optimStates[j])
     elseif self.method == 'adam' then
       adamStep(gradParams[j], self.learningRate, self.optimStates[j])
+    elseif self.method == "mom" then
+      momStep(gradParams[j], self.learningRate, self.optimStates[j])
     else
       gradParams[j]:mul(-self.learningRate)
     end

@@ -72,6 +72,7 @@ function BoxBatch2:__init(srcs, srcFeatures, tgt, tgtFeatures, bsLen,
   --self.sourceLength, self.sourceSize = getLength(src)
 
   --local sourceSeq = torch.IntTensor(#srcs, self.sourceLength, self.size):fill(onmt.Constants.PAD)
+  -- source concatenates all rows in the table into a single column (and concatenates everything in the batch too)
   self.sourceInput = torch.IntTensor(self.size*#srcs*self.sourceLength, nFeatures)
   --self.sourceInput = sourceSeq:clone()
 
