@@ -47,27 +47,30 @@ function BoxTableEncoder:_buildModel()
     local featEmbs
     if args.feat_merge == "concat" then
         -- concatenates embeddings of all features and applies MLP
-        featEmbs = nn.Tanh()(
-          nn.Linear(args.nFeatures*args.encDim, args.encDim)(
+        featEmbs = nn.Linear(args.nFeatures*args.encDim, args.encDim)(
             nn.View(-1, args.nFeatures*args.encDim)(
-             lut(x))))
+             lut(x)))
     else
         -- adds embeddings of all features and applies bias and nonlinearity
         -- (i.e., embeds sparse features)
-        featEmbs = nn.Tanh()(
-          nn.Add(args.encDim)(
-            nn.Sum(2)(
-              lut(x))))
+        featEmbs = nn.Add(args.encDim)(
+                     nn.Sum(2)(
+                        lut(x)))
     end
+    featEmbs = args.relu and nn.ReLU()(featEmbs) or nn.Tanh()(featEmbs)
     -- featEmbs are batchSize*nRows*nCols x encDim
 
     for i = 2, args.nLayers do
-        featEmbs = nn.Tanh()(nn.Linear(args.encDim, args.encDim)(featEmbs))
+        if args.dropout and args.dropout > 0 then
+            featEmbs = nn.Dropout(args.dropout)(featEmbs) -- maybe don't want?
+        end
+        featEmbs = nn.Linear(args.encDim, args.encDim)(featEmbs)
+        featEmbs = args.relu and nn.ReLU()(featEmbs) or nn.Tanh()(featEmbs)
     end
 
-    if args.dropout and args.dropout > 0 then
-        featEmbs = nn.Dropout(args.dropout)(featEmbs) -- maybe don't want?
-    end
+    -- if args.dropout and args.dropout > 0 then
+    --     featEmbs = nn.Dropout(args.dropout)(featEmbs) -- maybe don't want?
+    -- end
 
     -- attn ctx should be batchSize x nRows*nCols x dim
     local ctx = nn.View(-1, args.nRows*args.nCols, args.encDim)(featEmbs)

@@ -1,11 +1,12 @@
 -- Class for saving and loading models during training.
 local Checkpoint = torch.class("Checkpoint")
 
-function Checkpoint:__init(options, model, optim, dataset)
+function Checkpoint:__init(options, model, flatParams, optim, dataset)
   self.options = options
   self.model = model
   self.optim = optim
   self.dataset = dataset
+  self.flatParams = flatParams
 
   self.savePath = self.options.save_model
 end
@@ -15,15 +16,16 @@ function Checkpoint:save(filePath, info)
   info.optimStates = self.optim:getStates()
 
   local data = {
-    models = {},
+    --models = {},
+    flatParams = self.flatParams,
     options = self.options,
     info = info,
     dicts = self.dataset.dicts
   }
 
-  for k, v in pairs(self.model) do
-    data.models[k] = v:serialize()
-  end
+  -- for k, v in pairs(self.model) do
+  --   data.models[k] = v:serialize()
+  -- end
 
   torch.save(filePath, data)
 end

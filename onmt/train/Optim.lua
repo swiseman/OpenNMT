@@ -146,6 +146,26 @@ function Optim:updateLearningRate(score, epoch)
   end
 end
 
+function Optim:updateLearningRate2(score, epoch)
+  self.valPerf[#self.valPerf + 1] = score
+  local doDecay = false
+  if epoch >= self.startDecayAt then
+    doDecay = true
+  end
+
+  if self.valPerf[#self.valPerf] ~= nil and self.valPerf[#self.valPerf-1] ~= nil then
+    local currPpl = self.valPerf[#self.valPerf]
+    local prevPpl = self.valPerf[#self.valPerf-1]
+    if currPpl > prevPpl then
+      doDecay = true
+    end
+  end
+
+  if doDecay then
+    self.learningRate = self.learningRate * self.learningRateDecay
+  end
+end
+
 function Optim:getLearningRate()
   return self.learningRate
 end

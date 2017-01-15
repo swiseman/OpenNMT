@@ -112,7 +112,9 @@ local function initParams(model, verbose)
     if opt.train_from:len() == 0 then
         p:uniform(-opt.param_init, opt.param_init)
     else
-        assert(false)
+        print("copying loaded params...")
+        local checkpoint = torch.load(opt.train_from)
+        p:copy(checkpoint.flatParams[1])
     end
 
     -- do module specific init; wordembeddings will happen multiple times,
@@ -258,7 +260,7 @@ local function trainModel(model, trainData, validData, dataset, info)
         optimStates = opt.optim_states
     })
 
-    local checkpoint = onmt.train.Checkpoint.new(opt, model, optim, dataset)
+    local checkpoint = onmt.train.Checkpoint.new(opt, model, params, optim, dataset)
 
     local function trainEpoch(epoch, lastValidPpl)
         local epochState
@@ -330,7 +332,11 @@ local function trainModel(model, trainData, validData, dataset, info)
         end
 
         if opt.optim == 'sgd' then
-            optim:updateLearningRate(validPpl, epoch)
+            if opt.decay_update2 then
+                optim:updateLearningRate2(validPpl, epoch)
+            else
+                optim:updateLearningRate(validPpl, epoch)
+            end
         end
 
         if validPpl < bestPpl then
@@ -390,43 +396,6 @@ local function main()
   onmt.utils.Cuda.init(opt)
   onmt.utils.Parallel.init(opt)
 
-  local checkpoint = {}
-
-  if opt.train_from:len() > 0 then
-    assert(path.exists(opt.train_from), 'checkpoint path invalid')
-
-    if not opt.json_log then
-      print('Loading checkpoint \'' .. opt.train_from .. '\'...')
-    end
-
-    checkpoint = torch.load(opt.train_from)
-
-    opt.layers = checkpoint.options.layers
-    opt.rnn_size = checkpoint.options.rnn_size
-    opt.brnn = checkpoint.options.brnn
-    opt.brnn_merge = checkpoint.options.brnn_merge
-    opt.input_feed = checkpoint.options.input_feed
-
-    -- Resume training from checkpoint
-    if opt.train_from:len() > 0 and opt.continue then
-      opt.optim = checkpoint.options.optim
-      opt.learning_rate_decay = checkpoint.options.learning_rate_decay
-      opt.start_decay_at = checkpoint.options.start_decay_at
-      opt.epochs = checkpoint.options.epochs
-      opt.curriculum = checkpoint.options.curriculum
-
-      opt.learning_rate = checkpoint.info.learningRate
-      opt.optim_states = checkpoint.info.optimStates
-      opt.start_epoch = checkpoint.info.epoch
-      opt.start_iteration = checkpoint.info.iteration
-
-      if not opt.json_log then
-        print('Resuming training from epoch ' .. opt.start_epoch
-                .. ' at iteration ' .. opt.start_iteration .. '...')
-      end
-    end
-  end
-
   -- Create the data loader class.
   if not opt.json_log then
     print('Loading data from \'' .. opt.data .. '\'...')
@@ -482,29 +451,21 @@ local function main()
     local model = {}
 
     local verbose = true
-    if checkpoint.models then
-        assert(false) -- this is gonna be annoying
-        for i = 1, trainData.nSourceRows do
-            model["encoder" .. i] = onmt.Models.loadEncoder(checkpoint.models["encoder" .. i], false)
-        end
-        model.decoder = onmt.Models.loadDecoder(checkpoint.models.decoder, false)
-    else
-        -- make decoder first
-        model.decoder = onmt.Models.buildDecoder(opt, dataset.dicts.tgt, verbose)
-        -- send to gpu immediately to make cloning things simpler
-        onmt.utils.Cuda.convert(model.decoder)
 
-        for i = 1, trainData.nSourceRows do
-            --model["encoder" .. i] = onmt.Models.buildEncoder(opt, dataset.dicts.src)
-            local sharee = opt.tie_encoder_rnns and model.encoder1
-            model["encoder" .. i] = makeVariouslyTiedEncoder(opt, dataset.dicts.src, model.decoder, sharee)
-            -- already on gpu
-        end
+    -- make decoder first
+    model.decoder = onmt.Models.buildDecoder(opt, dataset.dicts.tgt, verbose)
+    -- send to gpu immediately to make cloning things simpler
+    onmt.utils.Cuda.convert(model.decoder)
 
-        model.aggregator = onmt.Aggregator(trainData.nSourceRows, opt.rnn_size, opt.rnn_size)
-        onmt.utils.Cuda.convert(model.aggregator)
-
+    for i = 1, trainData.nSourceRows do
+        --model["encoder" .. i] = onmt.Models.buildEncoder(opt, dataset.dicts.src)
+        local sharee = opt.tie_encoder_rnns and model.encoder1
+        model["encoder" .. i] = makeVariouslyTiedEncoder(opt, dataset.dicts.src, model.decoder, sharee)
+        -- already on gpu
     end
+
+    model.aggregator = onmt.Aggregator(trainData.nSourceRows, opt.rnn_size, opt.rnn_size)
+    onmt.utils.Cuda.convert(model.aggregator)
 
     -- for _, mod in pairs(model) do
     --     onmt.utils.Cuda.convert(mod)

@@ -35,6 +35,7 @@ cmd:option('-pool', 'mean', [[mean or max]])
 cmd:option('-enc_layers', 1, [[]])
 cmd:option('-enc_emb_size', 200, [[]])
 cmd:option('-enc_dropout', 0, [[]])
+cmd:option('-enc_relu', false, [[]])
 
 cmd:text("")
 cmd:text("**Optimization options**")
@@ -55,6 +56,7 @@ cmd:option('-dropout', 0.3, [[Dropout probability. Dropout is applied between ve
 cmd:option('-learning_rate_decay', 0.5, [[Decay learning rate by this much if (i) perplexity does not decrease
                                         on the validation set or (ii) epoch has gone past the start_decay_at_limit]])
 cmd:option('-start_decay_at', 10000, [[Start decay after this epoch]])
+cmd:option('-decay_update2', false, [[Decay less]])
 cmd:option('-curriculum', 0, [[For this many epochs, order the minibatches based on source
                              sequence length. Sometimes setting this to 1 will increase convergence speed.]])
 cmd:option('-pre_word_vecs_enc', '', [[If a valid path is specified, then this will load
@@ -108,7 +110,9 @@ local function initParams(model, verbose)
     if opt.train_from:len() == 0 then
         p:uniform(-opt.param_init, opt.param_init)
     else
-        assert(false)
+        print("copying loaded params...")
+        local checkpoint = torch.load(opt.train_from)
+        p:copy(checkpoint.flatParams[1])
     end
 
     -- do module specific init; wordembeddings will happen multiple times,
@@ -155,7 +159,7 @@ local function buildCriterion(vocabSize, features)
   return criterion
 end
 
-local function allTraining(model)
+function allTraining(model)
     for _, mod in pairs(model) do
         if mod.training then
             mod:training()
@@ -163,7 +167,7 @@ local function allTraining(model)
     end
 end
 
-local function allEvaluate(model)
+function allEvaluate(model)
     for _, mod in pairs(model) do
         if mod.evaluate then
             mod:evaluate()
@@ -241,7 +245,7 @@ local function trainModel(model, trainData, validData, dataset, info)
         mom = opt.mom
     })
 
-    local checkpoint = onmt.train.Checkpoint.new(opt, model, optim, dataset)
+    local checkpoint = onmt.train.Checkpoint.new(opt, model, params, optim, dataset)
 
     local function trainEpoch(epoch, lastValidPpl)
         local epochState
@@ -311,9 +315,14 @@ local function trainModel(model, trainData, validData, dataset, info)
         if not opt.json_log then
             print('Validation perplexity: ' .. validPpl)
         end
+        greedy_eval(model, validData, nil, g_tgtDict, 1, 10)
 
         if opt.optim == 'sgd' or opt.optim == 'mom' then
-            optim:updateLearningRate(validPpl, epoch)
+            if opt.decay_update2 then
+                optim:updateLearningRate2(validPpl, epoch)
+            else
+                optim:updateLearningRate(validPpl, epoch)
+            end
         end
 
         if validPpl < bestPpl then
@@ -337,43 +346,6 @@ local function main()
   onmt.utils.Opt.init(opt, requiredOptions)
   onmt.utils.Cuda.init(opt)
   onmt.utils.Parallel.init(opt)
-
-  local checkpoint = {}
-
-  if opt.train_from:len() > 0 then
-    assert(path.exists(opt.train_from), 'checkpoint path invalid')
-
-    if not opt.json_log then
-      print('Loading checkpoint \'' .. opt.train_from .. '\'...')
-    end
-
-    checkpoint = torch.load(opt.train_from)
-
-    opt.layers = checkpoint.options.layers
-    opt.rnn_size = checkpoint.options.rnn_size
-    opt.brnn = checkpoint.options.brnn
-    opt.brnn_merge = checkpoint.options.brnn_merge
-    opt.input_feed = checkpoint.options.input_feed
-
-    -- Resume training from checkpoint
-    if opt.train_from:len() > 0 and opt.continue then
-      opt.optim = checkpoint.options.optim
-      opt.learning_rate_decay = checkpoint.options.learning_rate_decay
-      opt.start_decay_at = checkpoint.options.start_decay_at
-      opt.epochs = checkpoint.options.epochs
-      opt.curriculum = checkpoint.options.curriculum
-
-      opt.learning_rate = checkpoint.info.learningRate
-      opt.optim_states = checkpoint.info.optimStates
-      opt.start_epoch = checkpoint.info.epoch
-      opt.start_iteration = checkpoint.info.iteration
-
-      if not opt.json_log then
-        print('Resuming training from epoch ' .. opt.start_epoch
-                .. ' at iteration ' .. opt.start_iteration .. '...')
-      end
-    end
-  end
 
   -- Create the data loader class.
   if not opt.json_log then
@@ -401,6 +373,8 @@ local function main()
       dataset.dicts.tgt.words:add("DOPEEXTRALABEL" .. i)
   end
   assert(dataset.dicts.src.words:size() == dataset.dicts.tgt.words:size())
+
+  g_tgtDict = dataset.dicts.tgt.words
 
   local trainData = onmt.data.BoxDataset2.new(dataset.train.src, dataset.train.tgt, colStartIdx, g_nFeatures)
   local validData = onmt.data.BoxDataset2.new(dataset.valid.src, dataset.valid.tgt, colStartIdx, g_nFeatures)
@@ -446,37 +420,30 @@ local function main()
     local model = {}
 
     local verbose = true
-    if checkpoint.models then
-        assert(false) -- this is gonna be annoying
-        for i = 1, trainData.nSourceRows do
-            model["encoder" .. i] = onmt.Models.loadEncoder(checkpoint.models["encoder" .. i], false)
-        end
-        model.decoder = onmt.Models.loadDecoder(checkpoint.models.decoder, false)
-    else
-        -- make decoder first
-        model.decoder = onmt.Models.buildDecoder(opt, dataset.dicts.tgt, verbose)
-        -- send to gpu immediately to make cloning things simpler
-        onmt.utils.Cuda.convert(model.decoder)
-        model.encoder = onmt.BoxTableEncoder({
-            vocabSize = dataset.dicts.src.words:size(),
-            encDim = opt.enc_emb_size,
-            decDim = opt.rnn_size,
-            feat_merge = opt.feat_merge,
-            nFeatures = g_nFeatures,
-            nLayers = opt.enc_layers,
-            nRows = trainData.nSourceRows,
-            nCols = g_nCols,
-            pool = opt.pool or "mean",
-            effectiveDecLayers = opt.layers*2,
-            dropout = opt.enc_dropout,
-            input_feed = opt.input_feed
-        })
-        onmt.utils.Cuda.convert(model.encoder)
-        -- share all the things
-        assert(model.encoder.lut.weight:size(1) == model.decoder.inputNet.net.weight:size(1))
-        model.encoder.lut:share(model.decoder.inputNet.net, 'weight', 'gradWeight')
-        model.encoder:shareTranforms()
-    end
+    -- make decoder first
+    model.decoder = onmt.Models.buildDecoder(opt, dataset.dicts.tgt, verbose)
+    -- send to gpu immediately to make cloning things simpler
+    onmt.utils.Cuda.convert(model.decoder)
+    model.encoder = onmt.BoxTableEncoder({
+        vocabSize = dataset.dicts.src.words:size(),
+        encDim = opt.enc_emb_size,
+        decDim = opt.rnn_size,
+        feat_merge = opt.feat_merge,
+        nFeatures = g_nFeatures,
+        nLayers = opt.enc_layers,
+        nRows = trainData.nSourceRows,
+        nCols = g_nCols,
+        pool = opt.pool or "mean",
+        effectiveDecLayers = opt.layers*2,
+        dropout = opt.enc_dropout,
+        relu = opt.enc_relu,
+        input_feed = opt.input_feed
+    })
+    onmt.utils.Cuda.convert(model.encoder)
+    -- share all the things
+    assert(model.encoder.lut.weight:size(1) == model.decoder.inputNet.net.weight:size(1))
+    model.encoder.lut:share(model.decoder.inputNet.net, 'weight', 'gradWeight')
+    model.encoder:shareTranforms()
 
     trainModel(model, trainData, validData, dataset, checkpoint.info)
 end
