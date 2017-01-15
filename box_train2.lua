@@ -315,7 +315,7 @@ local function trainModel(model, trainData, validData, dataset, info)
         if not opt.json_log then
             print('Validation perplexity: ' .. validPpl)
         end
-        greedy_eval(model, validData, nil, g_tgtDict, 1, 10)
+        onmt.train.Greedy.greedy_eval(model, validData, nil, g_tgtDict, 1, 10)
 
         if opt.optim == 'sgd' or opt.optim == 'mom' then
             if opt.decay_update2 then
@@ -445,7 +445,7 @@ local function main()
     model.encoder.lut:share(model.decoder.inputNet.net, 'weight', 'gradWeight')
     model.encoder:shareTranforms()
 
-    trainModel(model, trainData, validData, dataset, checkpoint.info)
+    trainModel(model, trainData, validData, dataset, nil)
 end
 
 main()

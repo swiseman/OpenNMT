@@ -161,7 +161,7 @@ local function buildCriterion(vocabSize, features)
   return criterion
 end
 
-local function allTraining(model)
+function allTraining(model)
     for _, mod in pairs(model) do
         if mod.training then
             mod:training()
@@ -169,7 +169,7 @@ local function allTraining(model)
     end
 end
 
-local function allEvaluate(model)
+function allEvaluate(model)
     for _, mod in pairs(model) do
         if mod.evaluate then
             mod:evaluate()
@@ -330,6 +330,7 @@ local function trainModel(model, trainData, validData, dataset, info)
         if not opt.json_log then
             print('Validation perplexity: ' .. validPpl)
         end
+        onmt.train.Greedy.greedy_eval(model, validData, nil, g_tgtDict, 1, 10)        
 
         if opt.optim == 'sgd' then
             if opt.decay_update2 then
@@ -402,7 +403,7 @@ local function main()
   end
 
   local dataset = torch.load(opt.data, 'binary', false)
-
+  g_tgtDict = dataset.dicts.tgt.words
   local trainData = onmt.data.BoxDataset.new(dataset.train.src, dataset.train.tgt, opt.use_posn_feats)
   local validData = onmt.data.BoxDataset.new(dataset.valid.src, dataset.valid.tgt, opt.use_posn_feats)
 
@@ -471,7 +472,7 @@ local function main()
     --     onmt.utils.Cuda.convert(mod)
     -- end
 
-    trainModel(model, trainData, validData, dataset, checkpoint.info)
+    trainModel(model, trainData, validData, dataset, nil)
 end
 
 main()
