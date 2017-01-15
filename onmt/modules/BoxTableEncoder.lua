@@ -42,18 +42,18 @@ end
 function BoxTableEncoder:_buildModel()
     local args = self.args
     local x = nn.Identity()() -- batcSize*nRows*srcLen x nFeatures
-    local lut = nn.LookupTable(args.vocabSize, args.encDim)
+    local lut = nn.LookupTable(args.vocabSize, args.wordVecSize)
     self.lut = lut
     local featEmbs
     if args.feat_merge == "concat" then
         -- concatenates embeddings of all features and applies MLP
-        featEmbs = nn.Linear(args.nFeatures*args.encDim, args.encDim)(
-            nn.View(-1, args.nFeatures*args.encDim)(
+        featEmbs = nn.Linear(args.nFeatures*args.wordVecSize, args.encDim)(
+            nn.View(-1, args.nFeatures*args.wordVecSize)(
              lut(x)))
     else
         -- adds embeddings of all features and applies bias and nonlinearity
         -- (i.e., embeds sparse features)
-        featEmbs = nn.Add(args.encDim)(
+        featEmbs = nn.Add(args.wordVecSize)(
                      nn.Sum(2)(
                         lut(x)))
     end
@@ -64,7 +64,7 @@ function BoxTableEncoder:_buildModel()
         if args.dropout and args.dropout > 0 then
             featEmbs = nn.Dropout(args.dropout)(featEmbs) -- maybe don't want?
         end
-        featEmbs = nn.Linear(args.encDim, args.encDim)(featEmbs)
+        featEmbs = nn.Linear(args.encDim, args.encDim)(featEmbs) -- wrong for summing, but that seems worse anyway
         featEmbs = args.relu and nn.ReLU()(featEmbs) or nn.Tanh()(featEmbs)
     end
 
@@ -91,7 +91,8 @@ function BoxTableEncoder:_buildModel()
     for i = 1, args.effectiveDecLayers do
         local lin = nn.Linear(args.nRows*args.encDim, args.decDim)
         table.insert(self.transforms, lin)
-        table.insert(outputs, lin(flattenedByRows))
+        table.insert(outputs,
+          args.tanhOutput and nn.Tanh()(lin(flattenedByRows)) or lin(flattenedByRows))
     end
 
     table.insert(outputs, ctx)

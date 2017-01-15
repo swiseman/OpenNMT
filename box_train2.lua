@@ -36,6 +36,7 @@ cmd:option('-enc_layers', 1, [[]])
 cmd:option('-enc_emb_size', 200, [[]])
 cmd:option('-enc_dropout', 0, [[]])
 cmd:option('-enc_relu', false, [[]])
+cmd:option('-enc_tanh_output', false, [[]])
 
 cmd:text("")
 cmd:text("**Optimization options**")
@@ -437,6 +438,8 @@ local function main()
         effectiveDecLayers = opt.layers*2,
         dropout = opt.enc_dropout,
         relu = opt.enc_relu,
+        wordVecSize = opt.word_vec_size,
+        tanhOutput = opt.enc_tanh_output,
         input_feed = opt.input_feed
     })
     onmt.utils.Cuda.convert(model.encoder)

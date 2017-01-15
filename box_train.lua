@@ -55,6 +55,7 @@ cmd:option('-dropout', 0.3, [[Dropout probability. Dropout is applied between ve
 cmd:option('-learning_rate_decay', 0.5, [[Decay learning rate by this much if (i) perplexity does not decrease
                                         on the validation set or (ii) epoch has gone past the start_decay_at_limit]])
 cmd:option('-start_decay_at', 10000, [[Start decay after this epoch]])
+cmd:option('-decay_update2', false, [[Decay less]])
 cmd:option('-curriculum', 0, [[For this many epochs, order the minibatches based on source
                              sequence length. Sometimes setting this to 1 will increase convergence speed.]])
 cmd:option('-pre_word_vecs_enc', '', [[If a valid path is specified, then this will load
@@ -330,7 +331,7 @@ local function trainModel(model, trainData, validData, dataset, info)
         if not opt.json_log then
             print('Validation perplexity: ' .. validPpl)
         end
-        onmt.train.Greedy.greedy_eval(model, validData, nil, g_tgtDict, 1, 10)        
+        onmt.train.Greedy.greedy_eval(model, validData, nil, g_tgtDict, 1, 10)
 
         if opt.optim == 'sgd' then
             if opt.decay_update2 then
