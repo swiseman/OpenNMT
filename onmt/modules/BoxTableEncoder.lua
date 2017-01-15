@@ -75,7 +75,7 @@ function BoxTableEncoder:_buildModel()
     -- attn ctx should be batchSize x nRows*nCols x dim
     local ctx
     if args.encDim ~= args.decDim then
-        ctx = nn.View(-1, args.nRows*args.nCols, args.encDim)(nn.Linear(encDim, decDim)(featEmbs))
+        ctx = nn.View(-1, args.nRows*args.nCols, args.decDim)(nn.Linear(args.encDim, args.decDim)(featEmbs))
     else
         ctx = nn.View(-1, args.nRows*args.nCols, args.encDim)(featEmbs)
     end
