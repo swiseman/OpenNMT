@@ -434,7 +434,7 @@ function Decoder:greedyFixedFwd(batch, encoderStates, context)
         self.argmaxes = torch.CudaLongTensor()
     end
     local PAD, EOS = onmt.Constants.PAD, onmt.Constants.EOS
-    self.greedy_inp:resize(batch.target_length+1, batch.size):fill(PAD)
+    self.greedy_inp:resize(batch.targetLength+1, batch.size):fill(PAD)
     self.maxes:resize(batch.size, 1)
     self.argmaxes:resize(batch.size, 1)
 
@@ -452,7 +452,7 @@ function Decoder:greedyFixedFwd(batch, encoderStates, context)
     for t = 1, batch.targetLength do
       prevOut, states = self:forwardOne(self.greedy_inp[t], states, context, prevOut, t)
       local preds = self.generator:forward(prevOut)
-      torch.max(self.maxes, self.argmaxes, preds, 2)
+      torch.max(self.maxes, self.argmaxes, preds[1], 2)
       self.greedy_inp[t+1]:copy(self.argmaxes:view(-1))
     end
     return self.greedy_inp
