@@ -73,7 +73,12 @@ function BoxTableEncoder:_buildModel()
     -- end
 
     -- attn ctx should be batchSize x nRows*nCols x dim
-    local ctx = nn.View(-1, args.nRows*args.nCols, args.encDim)(featEmbs)
+    local ctx
+    if args.encDim ~= args.decDim then
+        ctx = nn.View(-1, args.nRows*args.nCols, args.encDim)(nn.Linear(encDim, decDim)(featEmbs))
+    else
+        ctx = nn.View(-1, args.nRows*args.nCols, args.encDim)(featEmbs)
+    end
 
     -- for now let's assume we also want row-wise summaries
     local byRows = nn.View(-1, args.nCols, args.encDim)(featEmbs) -- batchSize*nRows x nCols x dim
