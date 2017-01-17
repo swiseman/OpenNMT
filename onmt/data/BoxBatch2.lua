@@ -88,7 +88,7 @@ function BoxBatch2:__init(srcs, srcFeatures, tgt, tgtFeatures, bsLen,
   local srcLen = self.sourceLength
   for b = 1, self.size do
     for j = 1, #srcs do
-        local sourceInput = srcs[j][b]:sub(2, srcs[j][b]:size(1)) -- skip first
+        local sourceInput = srcs[j][b]:sub(2, srcs[j][b]:size(1)) -- skip first (ok for linescore since padded)
         self.sourceInput:sub(currRow, currRow+srcLen-1, 1, 1):copy(sourceInput)
 
         -- -- Source input is left padded [PPPPPPABCDE] .

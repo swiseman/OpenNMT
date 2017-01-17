@@ -359,8 +359,8 @@ local function main()
   -- add extra shit for all the column features
   --Hacky Constants
   g_nRegRows = 13
-  g_specPadding = 7
-  g_nCols = 20
+  g_specPadding = 22 --want to take the last thing now which is the team name (not in first place anymore)--7
+  g_nCols = 22 --20
   g_nFeatures = 4
 
   print("USING HACKY GLOBALS!!!",
