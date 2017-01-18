@@ -18,4 +18,7 @@ require('onmt.modules.FeaturesGenerator')
 require('onmt.modules.Aggregator')
 require('onmt.modules.BoxTableEncoder')
 
+require('onmt.modules.CopyGenerator')
+require('onmt.modules.MarginalNLLCriterion')
+
 return onmt

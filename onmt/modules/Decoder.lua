@@ -339,15 +339,25 @@ function Decoder:backward(batch, outputs, criterion, ctxLen)
 
   local attnScoresLoc = self.args.returnAttnScores and 1 or 0
 
+  local layerSizes = {}
+  if self.args.returnAttnScores then -- last layer has different length than all the others
+      for i = 1, decLayers-1 do
+          table.insert(layerSizes, {batch.size, self.args.rnnSize})
+      end
+      table.insert(layerSizes, {batch.size, batch.totalSourceLength})
+  else
+      layerSizes = {batch.size, self.args.rnnSize} -- will be used for every layer
+  end
+
   if self.gradOutputsProto == nil then
     self.gradOutputsProto = onmt.utils.Tensor.initTensorTable(decLayers,
                                                               self.gradOutputProto,
-                                                              { batch.size, self.args.rnnSize })
+                                                              layerSizes)
   end
 
   local ctxLen = ctxLen or batch.sourceLength -- for back compat
   local gradStatesInput = onmt.utils.Tensor.reuseTensorTable(self.gradOutputsProto,
-                                                             { batch.size, self.args.rnnSize })
+                                                             layerSizes)
   local gradContextInput = onmt.utils.Tensor.reuseTensor(self.gradContextProto,
                                                          { batch.size, ctxLen, self.args.rnnSize })
 
@@ -378,6 +388,9 @@ function Decoder:backward(batch, outputs, criterion, ctxLen)
     end
 
     for j = 1, outputLayers do
+        -- print(t, j)
+        -- print(gradStatesInput[decLayers-outputLayers+j]:size())
+        -- print(decGradOut[j]:size())
         gradStatesInput[decLayers-outputLayers+j]:add(decGradOut[j])
     end
 

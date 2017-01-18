@@ -67,6 +67,7 @@ function BoxBatch2:__init(srcs, srcFeatures, tgt, tgtFeatures, bsLen,
   self.size = #tgt
 
   self.sourceLength = bsLen-1 -- skipping first col...
+  self.totalSourceLength = #srcs*self.sourceLength -- all rows
   assert(srcs[1][1]:size(1) == bsLen)
   local srcLen = self.sourceLength
   local vocabSize = colStartIdx+2*srcLen+1
@@ -74,7 +75,7 @@ function BoxBatch2:__init(srcs, srcFeatures, tgt, tgtFeatures, bsLen,
 
   --local sourceSeq = torch.IntTensor(#srcs, self.sourceLength, self.size):fill(onmt.Constants.PAD)
   -- source concatenates all rows in the table into a single column (and concatenates everything in the batch too)
-  self.sourceInput = torch.IntTensor(self.size*#srcs*self.sourceLength, nFeatures)
+  self.sourceInput = torch.IntTensor(self.size*self.totalSourceLength, nFeatures)
   --self.sourceInput = sourceSeq:clone()
 
   if tgt ~= nil then
@@ -84,6 +85,11 @@ function BoxBatch2:__init(srcs, srcFeatures, tgt, tgtFeatures, bsLen,
     self.targetInput = targetSeq:clone()
     -- this might be too big
     self.targetOutput = targetMasks and torch.Tensor(self.targetLength, self.size, vocabSize+#srcs*srcLen) or targetSeq:clone()
+  end
+
+  local srcLocs
+  if targetMasks then
+      srcLocs = findSourceLocations(srcs, self.size, vocabSize)
   end
 
   local currRow = 1
@@ -126,14 +132,18 @@ function BoxBatch2:__init(srcs, srcFeatures, tgt, tgtFeatures, bsLen,
       -- Target is right padded [<S>ABCDEPPPPPP] .
       self.targetInput[{{1, targetLength}, b}]:copy(targetInput)
 
-      -- first put in 1-hot word outputs
-      assert(targetLength == self.targetLength)
-      self.targetOutput[{{},b,{}}]:scatter(2, targetOutput:view(targetOutput:size(1), 1):long(), 1)
-      -- now need to find every location in source that agrees w/ targetOutput
-      for t = 1, targetLength do
-          self.targetOutput[t][b]:indexFill(1,
-
-      --self.targetOutput[{{1, targetLength}, b}]:copy(targetOutput)
+      if targetMasks then
+          -- first put in 1-hot word outputs
+          self.targetOutput[{{1, targetLength},b,{}}]:scatter(2, targetOutput:view(targetOutput:size(1), 1):long(), 1)
+          -- now need to find every location in source that agrees w/ targetOutput
+          for t = 1, targetLength do
+              if srcLocs[b][targetOutput[t]] then
+                  self.targetOutput[t][b]:indexFill(1, srcLocs[b][targetOutput[t]], 1)
+              end
+          end
+      else
+          self.targetOutput[{{1, targetLength}, b}]:copy(targetOutput)
+      end
     end
   end
   --print(currRow, self.sourceInput:size(1))

@@ -32,6 +32,8 @@ local GlobalAttention, parent = torch.class('onmt.GlobalAttention', 'nn.Containe
 --]]
 function GlobalAttention:__init(dim, returnAttnScores, tanhQuery)
   parent.__init(self)
+  self.returnAttnScores = returnAttnScores
+  self.tanhQuery = tanhQuery
   self.net = self:_buildModel(dim)
   self:add(self.net)
 end
@@ -42,7 +44,7 @@ function GlobalAttention:_buildModel(dim)
   table.insert(inputs, nn.Identity()())
 
   local targetT = nn.Linear(dim, dim, false)(inputs[1]) -- batchL x dim
-  if tanhQuery then
+  if self.tanhQuery then
     targetT = nn.Tanh()(targetT)
   end
   local context = inputs[2] -- batchL x sourceTimesteps x dim
@@ -61,7 +63,7 @@ function GlobalAttention:_buildModel(dim)
   contextCombined = nn.JoinTable(2)({contextCombined, inputs[1]}) -- batchL x dim*2
   local contextOutput = nn.Tanh()(nn.Linear(dim*2, dim, false)(contextCombined))
   local outputs = {contextOutput}
-  if returnAttnScores then
+  if self.returnAttnScores then
     table.insert(outputs, attn)
   end
   return nn.gModule(inputs, outputs)

@@ -1,7 +1,7 @@
 require('onmt.init')
 
 local path = require('pl.path')
-require('tds')
+tds = require('tds')
 local cmd = torch.CmdLine()
 
 cmd:text("")
@@ -31,6 +31,10 @@ cmd:option('-feat_merge', 'concat', [[Merge action for the features embeddings: 
 cmd:option('-input_feed', 1, [[Feed the context vector at each time step as additional input (via concatenation with the word embeddings) to the decoder.]])
 cmd:option('-residual', false, [[Add residual connections between RNN layers.]])
 cmd:option('-just_lm', false, [[No conditioning]])
+cmd:option('-copy_generate', false, [[]])
+cmd:option('-tanh_query', false, [[]])
+
+
 cmd:option('-pool', 'mean', [[mean or max]])
 cmd:option('-enc_layers', 1, [[]])
 cmd:option('-enc_emb_size', 200, [[]])
@@ -151,7 +155,13 @@ local function buildCriterion(vocabSize, features)
     criterion:add(nll)
   end
 
-  addNllCriterion(vocabSize)
+  if opt.copy_generate then
+      local marginalCrit = onmt.MarginalNLLCriterion(onmt.Constants.PAD)
+      marginalCrit.sizeAverage = false
+      criterion:add(marginalCrit)
+  else
+      addNllCriterion(vocabSize)
+  end
 
   for j = 1, #features do
     addNllCriterion(features[j]:size())
@@ -377,8 +387,8 @@ local function main()
 
   g_tgtDict = dataset.dicts.tgt.words
 
-  local trainData = onmt.data.BoxDataset2.new(dataset.train.src, dataset.train.tgt, colStartIdx, g_nFeatures)
-  local validData = onmt.data.BoxDataset2.new(dataset.valid.src, dataset.valid.tgt, colStartIdx, g_nFeatures)
+  local trainData = onmt.data.BoxDataset2.new(dataset.train.src, dataset.train.tgt, colStartIdx, g_nFeatures, opt.copy_generate)
+  local validData = onmt.data.BoxDataset2.new(dataset.valid.src, dataset.valid.tgt, colStartIdx, g_nFeatures, opt.copy_generate)
 
   trainData:setBatchSize(opt.max_batch_size)
   validData:setBatchSize(opt.max_batch_size)

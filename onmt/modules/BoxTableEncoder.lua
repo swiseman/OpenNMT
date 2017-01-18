@@ -144,10 +144,11 @@ end
   Returns: `gradInputs` of input network.
 --]]
 function BoxTableEncoder:backward(batch, gradStatesOutput, gradContextOutput)
-    if self.args.input_feed then
-        table.remove(gradStatesOutput) -- last thing is empty input feed thing
+    local encGradOut = {}
+    for i = 1, self.args.effectiveDecLayers do -- ignore input feed (and attn outputs)
+        table.insert(encGradOut, gradStatesOutput[i])
     end
-    table.insert(gradStatesOutput, gradContextOutput)
-    local gradInputs = self.network:backward(batch:getSource(), gradStatesOutput)
+    table.insert(encGradOut, gradContextOutput)
+    local gradInputs = self.network:backward(batch:getSource(), encGradOut)
     return gradInputs
 end
