@@ -4,7 +4,7 @@ local BoxDataset2 = torch.class("BoxDataset2")
 --[[ Initialize a data object given aligned tables of IntTensors `srcData`
   and `tgtData`.
 --]]
-function BoxDataset2:__init(srcData, tgtData, colStartIdx, nFeatures)
+function BoxDataset2:__init(srcData, tgtData, colStartIdx, nFeatures, targetMasks)
 
   self.srcs = srcData.words
   self.srcFeatures = srcData.features
@@ -19,6 +19,7 @@ function BoxDataset2:__init(srcData, tgtData, colStartIdx, nFeatures)
 
   self.colStartIdx = colStartIdx -- idx after vocab where shit be starting
   self.nFeatures  = nFeatures
+  self.targetMasks = targetMasks
 end
 
 --[[ Setup up the training data to respect `maxBatchSize`. ]]
@@ -101,7 +102,7 @@ function BoxDataset2:getBatch(idx)
   end
 
   local bb = onmt.data.BoxBatch2.new(srcs, srcFeatures, tgt, tgtFeatures,
-        self.maxSourceLength, self.colStartIdx, self.nFeatures)
+        self.maxSourceLength, self.colStartIdx, self.nFeatures, self.targetMasks)
 
   return bb
 end

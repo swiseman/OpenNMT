@@ -57,7 +57,7 @@ Parameters:
   * `tgtFeatures` - 2D table of target batch features (opt)
 --]]
 function BoxBatch2:__init(srcs, srcFeatures, tgt, tgtFeatures, bsLen,
-    colStartIdx, nFeatures)
+    colStartIdx, nFeatures, targetMasks)
   local srcs = srcs or {}
 
   if tgt ~= nil then
@@ -68,7 +68,8 @@ function BoxBatch2:__init(srcs, srcFeatures, tgt, tgtFeatures, bsLen,
 
   self.sourceLength = bsLen-1 -- skipping first col...
   assert(srcs[1][1]:size(1) == bsLen)
-
+  local srcLen = self.sourceLength
+  local vocabSize = colStartIdx+2*srcLen+1
   --self.sourceLength, self.sourceSize = getLength(src)
 
   --local sourceSeq = torch.IntTensor(#srcs, self.sourceLength, self.size):fill(onmt.Constants.PAD)
@@ -81,11 +82,12 @@ function BoxBatch2:__init(srcs, srcFeatures, tgt, tgtFeatures, bsLen,
 
     local targetSeq = torch.IntTensor(self.targetLength, self.size):fill(onmt.Constants.PAD)
     self.targetInput = targetSeq:clone()
-    self.targetOutput = targetSeq:clone()
+    -- this might be too big
+    self.targetOutput = targetMasks and torch.Tensor(self.targetLength, self.size, vocabSize+#srcs*srcLen) or targetSeq:clone()
   end
 
   local currRow = 1
-  local srcLen = self.sourceLength
+
   for b = 1, self.size do
     for j = 1, #srcs do
         local sourceInput = srcs[j][b]:sub(2, srcs[j][b]:size(1)) -- skip first (ok for linescore since padded)
@@ -116,20 +118,63 @@ function BoxBatch2:__init(srcs, srcFeatures, tgt, tgtFeatures, bsLen,
 
     if tgt ~= nil then
       -- Input: [<s>ABCDE]
-      -- Ouput: [ABCDE</s>]
+      -- Output: [ABCDE</s>]
       local targetLength = tgt[b]:size(1) - 1
       local targetInput = tgt[b]:narrow(1, 1, targetLength)
       local targetOutput = tgt[b]:narrow(1, 2, targetLength)
 
       -- Target is right padded [<S>ABCDEPPPPPP] .
       self.targetInput[{{1, targetLength}, b}]:copy(targetInput)
-      self.targetOutput[{{1, targetLength}, b}]:copy(targetOutput)
 
+      -- first put in 1-hot word outputs
+      assert(targetLength == self.targetLength)
+      self.targetOutput[{{},b,{}}]:scatter(2, targetOutput:view(targetOutput:size(1), 1):long(), 1)
+      -- now need to find every location in source that agrees w/ targetOutput
+      for t = 1, targetLength do
+          self.targetOutput[t][b]:indexFill(1,
+
+      --self.targetOutput[{{1, targetLength}, b}]:copy(targetOutput)
     end
   end
   --print(currRow, self.sourceInput:size(1))
   assert(currRow == self.sourceInput:size(1)+1)
 end
+
+
+-- maps words to their (linearized) location (for each batch)
+function findSourceLocations(srcs, batchSize, offset)
+    local srcLocs = tds.Vec()
+    for b = 1, batchSize do
+        b_tbl = {}
+        local srcIdx = 1
+        for j = 1, #srcs do
+            local sourceInput = srcs[j][b]:sub(2, srcs[j][b]:size(1))
+            for t = 1, sourceInput:size(1) do
+                if not b_tbl[sourceInput[t]] then
+                    b_tbl[sourceInput[t]] = {}
+                end
+                table.insert(b_tbl[sourceInput[t]], srcIdx)
+                srcIdx = srcIdx + 1
+            end
+        end
+        -- copy into a tds thing
+        local b_hash = tds.Hash()
+        for k, v in pairs(b_tbl) do
+            b_hash[k] = torch.LongTensor(v):add(offset)
+        end
+        srcLocs:insert(b_hash)
+    end
+    return srcLocs
+end
+
+-- -- would be faster to precompute everything for each minibatch, but might be tricky....
+-- function getBatchLocations(srcLocs, tgt)
+--     for b = 1, #tgt do
+--         local targetLength = tgt[b]:size(1) - 1
+--         local targetOutput = tgt[b]:narrow(1, 2, targetLength)
+--         for t = 1, targetLength do
+--             if srcLocs[b][targetOutput[t]] then
+
 
 --[[ Set source input directly,
 

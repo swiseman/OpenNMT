@@ -27,8 +27,10 @@ local GlobalAttention, parent = torch.class('onmt.GlobalAttention', 'nn.Containe
   Parameters:
 
   * `dim` - dimension of the context vectors.
+  * `returnAttnScores` - also out unnormalized attn scores
+  * `tanhQuery` - use tanh(q) as query vector
 --]]
-function GlobalAttention:__init(dim)
+function GlobalAttention:__init(dim, returnAttnScores, tanhQuery)
   parent.__init(self)
   self.net = self:_buildModel(dim)
   self:add(self.net)
@@ -40,6 +42,9 @@ function GlobalAttention:_buildModel(dim)
   table.insert(inputs, nn.Identity()())
 
   local targetT = nn.Linear(dim, dim, false)(inputs[1]) -- batchL x dim
+  if tanhQuery then
+    targetT = nn.Tanh()(targetT)
+  end
   local context = inputs[2] -- batchL x sourceTimesteps x dim
 
   -- Get attention.
@@ -47,16 +52,19 @@ function GlobalAttention:_buildModel(dim)
   attn = nn.Sum(3)(attn)
   local softmaxAttn = nn.SoftMax()
   softmaxAttn.name = 'softmaxAttn'
-  attn = softmaxAttn(attn)
-  attn = nn.Replicate(1,2)(attn) -- batchL x 1 x sourceL
+  local attnDist = softmaxAttn(attn)
+  attnDist = nn.Replicate(1,2)(attnDist) -- batchL x 1 x sourceL
 
   -- Apply attention to context.
-  local contextCombined = nn.MM()({attn, context}) -- batchL x 1 x dim
+  local contextCombined = nn.MM()({attnDist, context}) -- batchL x 1 x dim
   contextCombined = nn.Sum(2)(contextCombined) -- batchL x dim
   contextCombined = nn.JoinTable(2)({contextCombined, inputs[1]}) -- batchL x dim*2
   local contextOutput = nn.Tanh()(nn.Linear(dim*2, dim, false)(contextCombined))
-
-  return nn.gModule(inputs, {contextOutput})
+  local outputs = {contextOutput}
+  if returnAttnScores then
+    table.insert(outputs, attn)
+  end
+  return nn.gModule(inputs, outputs)
 end
 
 function GlobalAttention:updateOutput(input)

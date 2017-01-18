@@ -111,6 +111,8 @@ local function buildDecoder(opt, dicts, verbose)
 
   if #dicts.features > 0 then
     generator = onmt.FeaturesGenerator.new(opt.rnn_size, dicts.words:size(), dicts.features)
+  elseif opt.copy_generate then
+    generator = onmt.CopyGenerator.new(opt.rnn_size, dicts.words:size())
   else
     generator = onmt.Generator.new(opt.rnn_size, dicts.words:size())
   end
@@ -124,7 +126,8 @@ local function buildDecoder(opt, dicts, verbose)
 
   local rnn = onmt.LSTM.new(opt.layers, inputSize, opt.rnn_size, opt.dropout, opt.residual)
 
-  return onmt.Decoder.new(inputNetwork, rnn, generator, opt.input_feed == 1)
+  return onmt.Decoder.new(inputNetwork, rnn, generator, opt.input_feed == 1,
+    opt.copy_generate, opt.tanh_query)
 end
 
 --[[ This is useful when training from a model in parallel mode: each thread must own its model. ]]

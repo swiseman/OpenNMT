@@ -25,8 +25,11 @@ Parameters:
   * `rnn` - recurrent module, such as [onmt.LSTM](onmt+modules+LSTM).
   * `generator` - optional, an output [onmt.Generator](onmt+modules+Generator).
   * `inputFeed` - bool, enable input feeding.
+  * `returnAttnScores` - bool, return unnormalized attn scores at each step
+  * `tanhQuery` - bool, add an additional nonlinearity to target state when computing attn
 --]]
-function Decoder:__init(inputNetwork, rnn, generator, inputFeed)
+function Decoder:__init(inputNetwork, rnn, generator, inputFeed,
+    returnAttnScores, tanhQuery)
   self.rnn = rnn
   self.inputNet = inputNetwork
 
@@ -41,6 +44,8 @@ function Decoder:__init(inputNetwork, rnn, generator, inputFeed)
   -- vector each time representing the attention at the
   -- previous step.
   self.args.inputFeed = inputFeed
+  self.args.returnAttnScores = returnAttnScores
+  self.args.tanhQuery = tanhQuery
 
   parent.__init(self, self:_buildModel())
 
@@ -145,13 +150,21 @@ function Decoder:_buildModel()
   outputs = { outputs:split(self.args.numEffectiveLayers) }
 
   -- Compute the attention here using h^L as query.
-  local attnLayer = onmt.GlobalAttention(self.args.rnnSize)
+  local attnLayer = onmt.GlobalAttention(self.args.rnnSize, self.args.returnAttnScores, self.args.tanhQuery)
   attnLayer.name = 'decoderAttn'
-  local attnOutput = attnLayer({outputs[#outputs], context})
+  local attnOutput, attnScores
+  if self.args.returnAttnScores then
+    attnOutput, attnScores = attnLayer({outputs[#outputs], context}):split(2)
+  else
+    attnOutput = attnLayer({outputs[#outputs], context})
+  end
   if self.rnn.dropout > 0 then
     attnOutput = nn.Dropout(self.rnn.dropout)(attnOutput)
   end
   table.insert(outputs, attnOutput)
+  if self.args.returnAttnScores then
+    table.insert(outputs, attnScores)
+  end
   return nn.gModule(inputs, outputs)
 end
 
@@ -224,6 +237,8 @@ function Decoder:forwardOne(input, prevStates, context, prevOut, t)
     if prevOut == nil then
       table.insert(inputs, onmt.utils.Tensor.reuseTensor(self.inputFeedProto,
                                                          { inputSize, self.args.rnnSize }))
+    elseif self.args.returnAttnScores then -- prevOut is a table
+      table.insert(inputs, prevOut[1])
     else
       table.insert(inputs, prevOut)
     end
@@ -234,11 +249,15 @@ function Decoder:forwardOne(input, prevStates, context, prevOut, t)
     self.inputs[t] = inputs
   end
 
-  local outputs = self:net(t):forward(inputs)
-  local out = outputs[#outputs]
+  local outputs = self:net(t):forward(inputs) -- [states; attnOutput; (attnScores)]
+  local attnScoresLoc = self.args.returnAttnScores and 1 or 0
+  local out = outputs[#outputs - attnScoresLoc]
   local states = {}
-  for i = 1, #outputs - 1 do
+  for i = 1, #outputs - 1 - attnScoresLoc do
     table.insert(states, outputs[i])
+  end
+  if self.args.returnAttnScores then
+    out = {out, outputs[#outputs]}
   end
 
   return out, states
@@ -313,8 +332,15 @@ Parameters:
   It returns both the gradInputs and the loss.
   -- ]]
 function Decoder:backward(batch, outputs, criterion, ctxLen)
+  local decLayers = self.args.numEffectiveLayers + 1
+  if self.args.returnAttnScores then
+    decLayers = decLayers + 1
+  end
+
+  local attnScoresLoc = self.args.returnAttnScores and 1 or 0
+
   if self.gradOutputsProto == nil then
-    self.gradOutputsProto = onmt.utils.Tensor.initTensorTable(self.args.numEffectiveLayers + 1,
+    self.gradOutputsProto = onmt.utils.Tensor.initTensorTable(decLayers,
                                                               self.gradOutputProto,
                                                               { batch.size, self.args.rnnSize })
   end
@@ -343,23 +369,31 @@ function Decoder:backward(batch, outputs, criterion, ctxLen)
 
     -- Compute the final layer gradient.
     local decGradOut = self.generator:backward(outputs[t], genGradOut)
-    gradStatesInput[#gradStatesInput]:add(decGradOut)
 
-    -- Compute the standarad backward.
+    local outputLayers = 1
+    if torch.type(decGradOut) == 'table' then
+      outputLayers = #decGradOut
+    else
+      decGradOut = {decGradOut}
+    end
+
+    for j = 1, outputLayers do
+        gradStatesInput[decLayers-outputLayers+j]:add(decGradOut[j])
+    end
+
+    -- Compute the standard backward.
     local gradInput = self:net(t):backward(self.inputs[t], gradStatesInput)
 
     -- Accumulate encoder output gradients.
-    -- print("oy")
-    -- print(gradContextInput:size())
-    -- print(gradInput)
-    -- print(self.args.inputIndex.context)
-    -- print(gradInput[self.args.inputIndex.context]:size())
     gradContextInput:add(gradInput[self.args.inputIndex.context])
-    gradStatesInput[#gradStatesInput]:zero()
+
+    for j = 1, outputLayers do
+      gradStatesInput[decLayers-outputLayers+j]:zero()
+    end
 
     -- Accumulate previous output gradients with input feeding gradients.
     if self.args.inputFeed and t > 1 then
-      gradStatesInput[#gradStatesInput]:add(gradInput[self.args.inputIndex.inputFeed])
+      gradStatesInput[decLayers - attnScoresLoc]:add(gradInput[self.args.inputIndex.inputFeed])
     end
 
     -- Prepare next decoder output gradients.
