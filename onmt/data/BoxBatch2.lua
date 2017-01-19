@@ -83,7 +83,7 @@ function BoxBatch2:__init(srcs, srcFeatures, tgt, tgtFeatures, bsLen,
       srcLocs = findSourceLocations(srcs, self.size, vocabSize)
   end
 
-  local maxIndices = 127 -- I'm just assuming we never get more than this many source locations; deal with it
+  local maxIndices = 255 -- I'm just assuming we never get more than this many source locations; deal with it
 
   if tgt ~= nil then
     self.targetLength, self.targetSize, self.targetNonZeros = getLength(tgt, 1)
