@@ -3,10 +3,9 @@
 
 local MarginalNLLCriterion, parent = torch.class('onmt.MarginalNLLCriterion', 'nn.Criterion')
 
-function MarginalNLLCriterion:__init(ignoreIdx)
+function MarginalNLLCriterion:__init()
    parent.__init(self)
    self.sizeAverage = true
-   self.ignoreIdx = ignoreIdx
 end
 
 
@@ -15,23 +14,34 @@ end
 Parameters:
 
   * `input` - an NxV tensor of probabilities.
-  * `target` - a mask with 0s for probabilities to be ignored and positive numbers for probabilities to be added
-
+  * `target` - an Nx(numNZ+1) tensor, where last column says how many nonzero indices there are
 --]]
+
 function MarginalNLLCriterion:updateOutput(input, target)
     if not self.buf then
         self.buf = torch.Tensor():typeAs(input)
         self.rowSums = torch.Tensor():typeAs(input)
         self.gradInput:typeAs(input)
     end
-    self.buf:resizeAs(input)
-    self.buf:cmul(input, target)
+
+    local nnz = target:size(2)-1
+    self.buf:resize(target:size(1), nnz):zero()
     self.rowSums:resize(input:size(1), 1)
-    if self.ignoreIdx then
-        self.buf:select(2, self.ignoreIdx):zero()
+
+    -- could do this w/o looping, but would require a lot of extra arithmetic
+    -- that might not end up being much more efficient
+    for i = 1, target:size(1) do
+        local nnz_i = target[i][nnz+1]
+        if nnz_i > 0 then
+            self.buf[i]:sub(1, nnz_i)
+              :index(input[i], 1, target[i]:sub(1, nnz_i))
+        else
+            self.buf[i][1] = 1 -- so logging gives zero...
+        end
     end
-    self.rowSums:sum(self.buf, 2) -- will store for backward
-    -- use buf
+
+    self.rowSums:sum(self.buf, 2)
+
     local logRowSums = self.buf:narrow(2, 1, 1)
     logRowSums:log(self.rowSums)
     self.output = -logRowSums:sum()
@@ -42,47 +52,70 @@ function MarginalNLLCriterion:updateOutput(input, target)
     return self.output
 end
 
---[[
-  Respecting the log probably doesn't actually matter that much....
-]]
 function MarginalNLLCriterion:updateGradInput(input, target)
-    self.gradInput:resizeAs(input)
-    self.gradInput:copy(target)
-    if self.ignoreIdx then
-        self.gradInput:select(2, self.ignoreIdx):zero()
+    self.gradInput:resizeAs(input):zero()
+
+    local nnz = target:size(2)-1
+    for i = 1, target:size(1) do
+        local nnz_i = target[i][nnz+1]
+        if nnz_i > 0 then
+            self.gradInput[i]:indexFill(1, target[i]:sub(1, nnz_i), 1)
+        end
     end
+
     self.gradInput:cdiv(self.rowSums:expand(input:size(1), input:size(2)))
     local scale = self.sizeAverage and -1/input:size(1) or -1
     self.gradInput:mul(scale)
     return self.gradInput
 end
 
-
+-- local mine = true
+--
 -- torch.manualSeed(2)
 -- local mlp = nn.Sequential()
 --          :add(nn.Linear(4,5))
---          :add(nn.SoftMax())
+-- if mine then
+--      mlp:add(nn.SoftMax())
+-- else
+--     mlp:add(nn.LogSoftMax())
+-- end
 --
--- local crit = onmt.MarginalNLLCriterion()
+-- local crit
+-- if mine then
+--     crit = onmt.MarginalNLLCriterion(1)
+-- else
+--     crit = nn.ClassNLLCriterion(torch.Tensor({0,1,1,1,1}))
+-- end
 -- crit.sizeAverage = false
 --
--- local X = torch.randn(2, 4)
--- local T = torch.zeros(2, 5)
--- T[1][1] = 1
--- T[1][3] = 1
--- T[2][2] = 1
+-- local X = torch.randn(3, 4)
+-- -- local T = torch.LongTensor({{2, 3},
+-- --                             {4, 1},
+-- --                             {1, 1}})
+--
+--
+-- local T = torch.LongTensor({{2, 3, 2},
+--                             {4, 1, 1},
+--                             {1, 1, 0}})--:view(-1)
+-- if not mine then
+--     T = T:select(2, 1)
+-- end
+--
+-- local nugtarg = T
+--
 --
 -- mlp:zeroGradParameters()
 -- mlp:forward(X)
--- crit:forward(mlp.output, T)
--- local gradOut = crit:backward(mlp.output, T)
+-- print("loss", crit:forward(mlp.output, nugtarg))
+-- local gradOut = crit:backward(mlp.output, nugtarg)
+-- print("gradOut", gradOut)
 -- mlp:backward(X, gradOut)
 --
 -- local eps = 1e-5
 --
 -- local function getLoss()
 --     mlp:forward(X)
---     return crit:forward(mlp.output, T)
+--     return crit:forward(mlp.output, nugtarg)
 -- end
 --
 -- local W = mlp:get(1).weight
@@ -96,4 +129,5 @@ end
 --         print(mlp:get(1).gradWeight[i][j], fd)
 --         W[i][j] = W[i][j] + eps
 --     end
+--     print("")
 -- end

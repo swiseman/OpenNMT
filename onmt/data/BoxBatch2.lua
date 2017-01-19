@@ -78,19 +78,23 @@ function BoxBatch2:__init(srcs, srcFeatures, tgt, tgtFeatures, bsLen,
   self.sourceInput = torch.IntTensor(self.size*self.totalSourceLength, nFeatures)
   --self.sourceInput = sourceSeq:clone()
 
+  local srcLocs
+  if targetMasks then
+      srcLocs = findSourceLocations(srcs, self.size, vocabSize)
+  end
+
+  local maxIndices = 7 -- I'm just assuming we never get more than 8; deal with it
+
   if tgt ~= nil then
     self.targetLength, self.targetSize, self.targetNonZeros = getLength(tgt, 1)
 
     local targetSeq = torch.IntTensor(self.targetLength, self.size):fill(onmt.Constants.PAD)
     self.targetInput = targetSeq:clone()
     -- this might be too big
-    self.targetOutput = targetMasks and torch.Tensor(self.targetLength, self.size, vocabSize+#srcs*srcLen) or targetSeq:clone()
+    self.targetOutput = targetMasks and torch.IntTensor(self.targetLength, self.size, maxIndices+1):zero() or targetSeq:clone()
   end
 
-  local srcLocs
-  if targetMasks then
-      srcLocs = findSourceLocations(srcs, self.size, vocabSize)
-  end
+
 
   local currRow = 1
 
@@ -133,12 +137,14 @@ function BoxBatch2:__init(srcs, srcFeatures, tgt, tgtFeatures, bsLen,
       self.targetInput[{{1, targetLength}, b}]:copy(targetInput)
 
       if targetMasks then
-          -- first put in 1-hot word outputs
-          self.targetOutput[{{1, targetLength},b,{}}]:scatter(2, targetOutput:view(targetOutput:size(1), 1):long(), 1)
-          -- now need to find every location in source that agrees w/ targetOutput
           for t = 1, targetLength do
+              self.targetOutput[t][b][1] = targetOutput[t]
               if srcLocs[b][targetOutput[t]] then
-                  self.targetOutput[t][b]:indexFill(1, srcLocs[b][targetOutput[t]], 1)
+                  local numInSrc = srcLocs[b][targetOutput[t]]:size(1)
+                  self.targetOutput[t][b]:sub(2, numInSrc+1):copy(srcLocs[b][targetOutput[t]])
+                  self.targetOutput[t][b][maxIndices+1] = numInSrc+1
+              else
+                  self.targetOutput[t][b][maxIndices+1] = 1
               end
           end
       else
@@ -170,7 +176,7 @@ function findSourceLocations(srcs, batchSize, offset)
         -- copy into a tds thing
         local b_hash = tds.Hash()
         for k, v in pairs(b_tbl) do
-            b_hash[k] = torch.LongTensor(v):add(offset)
+            b_hash[k] = torch.IntTensor(v):add(offset)
         end
         srcLocs:insert(b_hash)
     end
