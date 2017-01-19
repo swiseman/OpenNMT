@@ -3,44 +3,36 @@
 
 local MarginalNLLCriterion, parent = torch.class('onmt.MarginalNLLCriterion', 'nn.Criterion')
 
-function MarginalNLLCriterion:__init()
+function MarginalNLLCriterion:__init(ignoreIdx)
    parent.__init(self)
    self.sizeAverage = true
 end
-
 
 --[[ This will output the negative log marginal, even though we'll ignore the log when doing gradients
 
 Parameters:
 
   * `input` - an NxV tensor of probabilities.
-  * `target` - an Nx(numNZ+1) tensor, where last column says how many nonzero indices there are
---]]
+  * `target` - a mask with 0s for probabilities to be ignored and positive numbers for probabilities to be added
 
+--]]
 function MarginalNLLCriterion:updateOutput(input, target)
     if not self.buf then
         self.buf = torch.Tensor():typeAs(input)
         self.rowSums = torch.Tensor():typeAs(input)
         self.gradInput:typeAs(input)
     end
-
-    local maxIndices = target:size(2)-1
-    self.buf:resize(target:size(1), maxIndices):zero()
-    self.buf:select(2, 1):fill(1) -- if we ignore a row it will sum to 1, so no loss
+    self.buf:resizeAs(input)
+    self.buf:cmul(input, target)
     self.rowSums:resize(input:size(1), 1)
-
-    -- could do this w/o looping, but would require a lot of extra arithmetic
-    -- that might not end up being much more efficient
-    for i = 1, target:size(1) do
-        local nnz_i = target[i][maxIndices+1]
-        if nnz_i > 0 then
-            self.buf[i]:sub(1, nnz_i)
-              :index(input[i], 1, target[i]:sub(1, nnz_i))
+    self.rowSums:sum(self.buf, 2) -- will store for backward
+    -- set rowSums = 0 to 1 since we're gonna log; dunno if there's a faster way
+    for i = 1, input:size(1) do
+        if self.rowSums[i][1] <= 0 then
+            self.rowSums[i][1] = 1
         end
     end
-
-    self.rowSums:sum(self.buf, 2)
-
+    -- use buf
     local logRowSums = self.buf:narrow(2, 1, 1)
     logRowSums:log(self.rowSums)
     self.output = -logRowSums:sum()
@@ -51,27 +43,18 @@ function MarginalNLLCriterion:updateOutput(input, target)
     return self.output
 end
 
+
 function MarginalNLLCriterion:updateGradInput(input, target)
-    self.gradInput:resizeAs(input):zero()
-
-    if self.sizeAverage then
-        self.rowSums:mul(input:size(1))
-    end
-
-    local maxIndices = target:size(2)-1
-    for i = 1, target:size(1) do
-        local nnz_i = target[i][maxIndices+1]
-        if nnz_i > 0 then
-            self.gradInput[i]:indexFill(1, target[i]:sub(1, nnz_i), 1)
-        end
-    end
-
-    -- faster than doing the arithmetic up there
+    self.gradInput:resizeAs(input)
+    self.gradInput:copy(target)
     self.rowSums:neg()
     self.gradInput:cdiv(self.rowSums:expand(input:size(1), input:size(2)))
-
+    if self.sizeAverage then
+        self.gradInput:div(input:size(1))
+    end
     return self.gradInput
 end
+
 
 -- local mine = true
 --
@@ -86,7 +69,7 @@ end
 --
 -- local crit
 -- if mine then
---     crit = onmt.MarginalNLLCriterion(1)
+--     crit = onmt.MarginalNLLCriterion()
 -- else
 --     crit = nn.ClassNLLCriterion(torch.Tensor({0,1,1,1,1}))
 -- end
@@ -101,11 +84,17 @@ end
 -- local T = torch.LongTensor({{2, 3, 2},
 --                             {4, 1, 1},
 --                             {1, 1, 0}})--:view(-1)
+--
+-- local maskT = torch.Tensor({{0,1,1,0,0},
+--                             {0,0,0,1,0},
+--                             {0,0,0,0,0}})
+--
 -- if not mine then
+--     assert(false)
 --     T = T:select(2, 1)
 -- end
 --
--- local nugtarg = T
+-- local nugtarg = maskT --T
 --
 --
 -- mlp:zeroGradParameters()
