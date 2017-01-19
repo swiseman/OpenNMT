@@ -24,19 +24,18 @@ function MarginalNLLCriterion:updateOutput(input, target)
         self.gradInput:typeAs(input)
     end
 
-    local nnz = target:size(2)-1
-    self.buf:resize(target:size(1), nnz):zero()
+    local maxIndices = target:size(2)-1
+    self.buf:resize(target:size(1), maxIndices):zero()
+    self.buf:select(2, 1):fill(1) -- if we ignore a row it will sum to 1, so no loss
     self.rowSums:resize(input:size(1), 1)
 
     -- could do this w/o looping, but would require a lot of extra arithmetic
     -- that might not end up being much more efficient
     for i = 1, target:size(1) do
-        local nnz_i = target[i][nnz+1]
+        local nnz_i = target[i][maxIndices+1]
         if nnz_i > 0 then
             self.buf[i]:sub(1, nnz_i)
               :index(input[i], 1, target[i]:sub(1, nnz_i))
-        else
-            self.buf[i][1] = 1 -- so logging gives zero...
         end
     end
 
@@ -55,17 +54,18 @@ end
 function MarginalNLLCriterion:updateGradInput(input, target)
     self.gradInput:resizeAs(input):zero()
 
-    local nnz = target:size(2)-1
+    if self.sizeAverage then
+        self.rowSums:mul(input:size(1))
+    end
+
+    local maxIndices = target:size(2)-1
     for i = 1, target:size(1) do
-        local nnz_i = target[i][nnz+1]
+        local nnz_i = target[i][maxIndices+1]
         if nnz_i > 0 then
-            self.gradInput[i]:indexFill(1, target[i]:sub(1, nnz_i), 1)
+            self.gradInput[i]:indexFill(1, target[i]:sub(1, nnz_i), -1/self.rowSums[i][1])
         end
     end
 
-    self.gradInput:cdiv(self.rowSums:expand(input:size(1), input:size(2)))
-    local scale = self.sizeAverage and -1/input:size(1) or -1
-    self.gradInput:mul(scale)
     return self.gradInput
 end
 
@@ -86,7 +86,7 @@ end
 -- else
 --     crit = nn.ClassNLLCriterion(torch.Tensor({0,1,1,1,1}))
 -- end
--- crit.sizeAverage = false
+-- --crit.sizeAverage = false
 --
 -- local X = torch.randn(3, 4)
 -- -- local T = torch.LongTensor({{2, 3},

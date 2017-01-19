@@ -83,7 +83,7 @@ function BoxBatch2:__init(srcs, srcFeatures, tgt, tgtFeatures, bsLen,
       srcLocs = findSourceLocations(srcs, self.size, vocabSize)
   end
 
-  local maxIndices = 7 -- I'm just assuming we never get more than 8; deal with it
+  local maxIndices = 127 -- I'm just assuming we never get more than this many source locations; deal with it
 
   if tgt ~= nil then
     self.targetLength, self.targetSize, self.targetNonZeros = getLength(tgt, 1)
@@ -138,14 +138,13 @@ function BoxBatch2:__init(srcs, srcFeatures, tgt, tgtFeatures, bsLen,
 
       if targetMasks then
           for t = 1, targetLength do
-              self.targetOutput[t][b][1] = targetOutput[t]
+              self.targetOutput[t][b][1] = targetOutput[t] -- put in next word
+              local numInSrc = 0
               if srcLocs[b][targetOutput[t]] then
-                  local numInSrc = srcLocs[b][targetOutput[t]]:size(1)
+                  numInSrc = srcLocs[b][targetOutput[t]]:size(1)
                   self.targetOutput[t][b]:sub(2, numInSrc+1):copy(srcLocs[b][targetOutput[t]])
-                  self.targetOutput[t][b][maxIndices+1] = numInSrc+1
-              else
-                  self.targetOutput[t][b][maxIndices+1] = 1
               end
+              self.targetOutput[t][b][maxIndices+1] = numInSrc+1
           end
       else
           self.targetOutput[{{1, targetLength}, b}]:copy(targetOutput)
