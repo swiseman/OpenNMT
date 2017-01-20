@@ -19,6 +19,7 @@ cmd:option('-save_model', '', [[Model filename (the model will be saved as
                               <save_model>_epochN_PPL.t7 where PPL is the validation perplexity]])
 cmd:option('-train_from', '', [[If training from a checkpoint then this is the path to the pretrained model.]])
 cmd:option('-continue', false, [[If training from a checkpoint, whether to continue the training in the same configuration or not.]])
+cmd:option('-just_eval', false, [[]])
 
 cmd:text("")
 cmd:text("**Model options**")
@@ -314,6 +315,11 @@ local function trainModel(model, trainData, validData, dataset, info)
 
     if not opt.json_log then
         print('Start training...')
+    end
+
+    if opt.just_eval then
+        onmt.train.Greedy.greedy_eval(model, validData, nil, g_tgtDict, 1, 10)
+        return
     end
 
     for epoch = opt.start_epoch, opt.epochs do

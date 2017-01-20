@@ -457,7 +457,7 @@ function Decoder2:greedyFixedFwd(batch, encoderStates, context)
     self.greedy_inp[1]:copy(batch:getTargetInput(1)) -- should be start token
     for t = 1, batch.targetLength do
       prevOut, states = self:forwardOne(self.greedy_inp[t], states, context, prevOut, t)
-      local preds = self.generator:forward({prevOut, context})
+      local preds = self.generator:forward({prevOut, context})[1]
       -- add attn to source (and not worry about unks)
       for b = 1, preds:size(1) do
         local srccells = batch:getCellsForExample(b)
@@ -468,7 +468,7 @@ function Decoder2:greedyFixedFwd(batch, encoderStates, context)
         end
       end
 
-      torch.max(self.maxes, self.argmaxes, preds[1], 2)
+      torch.max(self.maxes, self.argmaxes, preds, 2)
       self.greedy_inp[t+1]:copy(self.argmaxes:view(-1))
     end
     return self.greedy_inp
