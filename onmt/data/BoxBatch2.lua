@@ -278,6 +278,11 @@ function BoxBatch2:getSource()
     return self.sourceInput
 end
 
+function BoxBatch2:getCellsForExample(b)
+    return self.sourceInput
+      :sub((b-1)*self.totalSourceLength+1, b*self.totalSourceLength):select(2,1)
+end
+
 --[[ Get target input batch at timestep `t`. --]]
 function BoxBatch2:getTargetInput(t)
   -- If a regular input, return word id, otherwise a table with features.

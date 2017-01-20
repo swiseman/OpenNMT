@@ -458,6 +458,16 @@ function Decoder2:greedyFixedFwd(batch, encoderStates, context)
     for t = 1, batch.targetLength do
       prevOut, states = self:forwardOne(self.greedy_inp[t], states, context, prevOut, t)
       local preds = self.generator:forward({prevOut, context})
+      -- add attn to source (and not worry about unks)
+      for b = 1, preds:size(1) do
+        local srccells = batch:getCellsForExample(b)
+        for j = 1, srccells:size(1) do
+          -- this works b/c we have the same vocabs
+          preds[b][srccells[j]] = preds[b][srccells[j]] + preds[b][self.generator.outputSize+j]
+          preds[b][self.generator.outputSize+j] = 0
+        end
+      end
+
       torch.max(self.maxes, self.argmaxes, preds[1], 2)
       self.greedy_inp[t+1]:copy(self.argmaxes:view(-1))
     end
