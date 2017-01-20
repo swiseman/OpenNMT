@@ -70,8 +70,14 @@ local function greedy_eval(model, data, src_dict, targ_dict,
         -- will just go up to true gold_length
         local trulen = batch.targetSize[n]
         local pred_sent = preds:select(2, n):sub(2, trulen+1):totable()
-        local gold_sent = batch.targetOutput:select(2, n)
+        local gold_sent
+        if batch.targetOutput:dim() == 3 then
+            gold_sent = batch.targetOutput:select(2, n)
+                 :sub(1, trulen):select(2, 1):totable()
+        else
+           gold_sent = batch.targetOutput:select(2, n)
              :sub(1, trulen):totable()
+        end
         local prec = get_ngram_prec(pred_sent, gold_sent, 4)
         for ii = 1, 4 do
             ngram_crct[ii] = ngram_crct[ii] + prec[ii][2]

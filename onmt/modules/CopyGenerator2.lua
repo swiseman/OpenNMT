@@ -8,6 +8,7 @@ function CopyGenerator2:__init(rnnSize, outputSize, tanhQuery)
   parent.__init(self)
   self.net = self:_buildGenerator(rnnSize, outputSize, tanhQuery)
   self:add(self.net)
+  self.outputSize = outputSize
 end
 
 -- N.B. this uses attnLayer, but should maybe use last real layer (in which case we need 3 inputs)
@@ -24,7 +25,7 @@ function CopyGenerator2:_buildGenerator(rnnSize, outputSize, tanhQuery)
     attn = nn.Sum(3)(attn) -- batchL x sourceL
 
     -- concatenate with regular output shit
-    local regularOutput = nn.Linear(rnn_size, outputSize)(tstate)
+    local regularOutput = nn.Linear(rnnSize, outputSize)(tstate)
     local catDist = nn.SoftMax()(nn.JoinTable(2)({regularOutput, attn}))
     return nn.gModule({tstate, context}, {catDist})
 
