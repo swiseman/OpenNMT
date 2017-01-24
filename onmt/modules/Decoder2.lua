@@ -192,11 +192,11 @@ function Decoder2:maskPadding(sourceSizes, sourceLength, beamSize)
 end
 
 function Decoder2:remember()
-    self.remember = true
+    self._remember = true
 end
 
 function Decoder2:forget()
-    self.remember = false
+    self._remember = false
 end
 
 -- in remember mode still need to reset at beginning of new sequence
@@ -277,7 +277,7 @@ function Decoder2:forwardAndApply(batch, encoderStates, context, func)
   end
 
   local states, prevOut
-  if self.remember and self.lastStates then
+  if self._remember and self.lastStates then
       prevOut = self.lastStates[#self.lastStates]
       states = {} -- could probably really just pop
       for i = 1, #self.lastStates-1 do
@@ -296,7 +296,7 @@ function Decoder2:forwardAndApply(batch, encoderStates, context, func)
     func(prevOut, t)
   end
 
-  if self.remember then -- save a pointer to the last output; need to check that this actually works b/c of mem shit
+  if self._remember then -- save a pointer to the last output; need to check that this actually works b/c of mem shit
       self.lastStates = self:net(batch.targetLength).output
   end
 end
