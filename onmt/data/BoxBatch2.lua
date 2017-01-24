@@ -86,8 +86,10 @@ function BoxBatch2:__init(srcs, srcFeatures, tgt, tgtFeatures, bsLen,
   local maxIndices = 255 -- I'm just assuming we never get more than this many source locations; deal with it
 
   if tgt ~= nil then
-    self.rulTargetLength, self.targetSize, self.targetNonZeros = getLength(tgt, 1)
+    -- N.B. targetSize is now wrongish....
+    self.rulTargetLength, self.rulTargetSize, self.rulTargetNonZeros = getLength(tgt, 1)
     self.targetLength = self.rulTargetLength -- will change this, since this is what decoder looks at
+    self.targetNonZeros = self.rulTargetNonZeros
 
     local targetSeq = torch.IntTensor(self.rulTargetLength, self.size):fill(onmt.Constants.PAD)
     self.targetInput = targetSeq:clone()
@@ -166,6 +168,7 @@ end
 function BoxBatch2:nextPiece()
     self.targetOffset = self.targetOffset + self.maxBptt
     self.targetLength = math.min(self.rulTargetLength-self.targetOffset, self.maxBptt)
+    self.targetNonZeros = 0 -- so we only count this once...
 end
 
 -- maps words to their (linearized) location (for each batch)

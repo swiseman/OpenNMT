@@ -462,7 +462,7 @@ function Decoder2:computeScore(batch, encoderStates, context)
   return score
 end
 
-function Decoder2:greedyFixedFwd(batch, encoderStates, context)
+function Decoder2:greedyFixedFwd(batch, encoderStates, context, probBuf)
     if not self.greedy_inp then
         self.greedy_inp = torch.CudaTensor()
         self.maxes = torch.CudaTensor()
@@ -498,6 +498,9 @@ function Decoder2:greedyFixedFwd(batch, encoderStates, context)
       end
 
       torch.max(self.maxes, self.argmaxes, preds, 2)
+      if probBuf then
+          probBuf[t]:copy(self.maxes:view(-1))
+      end
       self.greedy_inp[t+1]:copy(self.argmaxes:view(-1))
     end
     return self.greedy_inp

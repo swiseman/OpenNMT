@@ -59,13 +59,19 @@ local function greedy_eval(model, data, src_dict, targ_dict,
   local start_print_batch = start_print_batch or 0
   local ngram_crct = torch.zeros(4)
   local ngram_total = torch.zeros(4)
+  local probs = torch.CudaTensor()
 
   allEvaluate(model)
 
   for i = 1, data:batchCount() do
     local batch = onmt.utils.Cuda.convert(data:getBatch(i))
     local aggEncStates, catCtx = allEncForward(model, batch)
-    local preds = model.decoder:greedyFixedFwd(batch, aggEncStates, catCtx)
+    model.decoder:resetLastStates()
+    probs:reshape(batch.targetLength, batch.size)
+    local preds = model.decoder:greedyFixedFwd(batch, aggEncStates, catCtx, probs)
+    if i >= start_print_batch and i <= end_print_batch then
+        print(preds:narrow(2, 1, 50))
+    end
     for n = 1, batch.size do
         -- will just go up to true gold_length
         local trulen = batch.targetSize[n]
