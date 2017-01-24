@@ -73,6 +73,7 @@ cmd:option('-pre_word_vecs_dec', '', [[If a valid path is specified, then this w
                                      See README for specific formatting instructions.]])
 cmd:option('-fix_word_vecs_enc', false, [[Fix word embeddings on the encoder side]])
 cmd:option('-fix_word_vecs_dec', false, [[Fix word embeddings on the decoder side]])
+cmd:option('-max_bptt', 500, [[]])
 
 cmd:text("")
 cmd:text("**Other options**")
@@ -211,8 +212,8 @@ local function eval(model, criterion, data)
   -- model.encoder:evaluate()
   -- model.decoder:evaluate()
   allEvaluate(model)
-
   for i = 1, data:batchCount() do
+    model.decoder:resetLastStates()
     local batch = onmt.utils.Cuda.convert(data:getBatch(i))
     local aggEncStates, catCtx = allEncForward(model, batch)
     --loss = loss + model.decoder:computeLoss(batch, encoderStates, context, criterion)
@@ -278,24 +279,30 @@ local function trainModel(model, trainData, validData, dataset, info)
         --opt.start_iteration = 1
 
         local iter = 1
+        model.decoder:remember()
         for i = startI, trainData:batchCount() do
             local batchIdx = epoch <= opt.curriculum and i or batchOrder[i]
             local batch =  trainData:getBatch(batchIdx)
             batch.totalSize = batch.size -- fuck off
             onmt.utils.Cuda.convert(batch)
 
-            optim:zeroGrad(gradParams)
-            local aggEncStates, catCtx = allEncForward(model, batch)
-            local ctxLen = catCtx:size(2)
+            local batchPieces = batch:splitIntoPieces(opt.max_bptt)
+            model.decoder:resetLastStates() -- don't use saved last state for new batch
+            for j = 1, batchPieces do
+                optim:zeroGrad(gradParams)
+                local aggEncStates, catCtx = allEncForward(model, batch)
+                local ctxLen = catCtx:size(2)
 
-            local decOutputs = model.decoder:forward(batch, aggEncStates, catCtx)
-            local encGradStatesOut, gradContext, loss = model.decoder:backward(batch, decOutputs, criterion, ctxLen)
-            allEncBackward(model, batch, encGradStatesOut, gradContext)
+                local decOutputs = model.decoder:forward(batch, aggEncStates, catCtx)
+                local encGradStatesOut, gradContext, loss = model.decoder:backward(batch, decOutputs, criterion, ctxLen)
+                allEncBackward(model, batch, encGradStatesOut, gradContext)
 
-            -- Update the parameters.
-            optim:prepareGrad(gradParams, opt.max_grad_norm)
-            optim:updateParams(params, gradParams)
-            epochState:update(batch, loss)
+                -- Update the parameters.
+                optim:prepareGrad(gradParams, opt.max_grad_norm)
+                optim:updateParams(params, gradParams)
+                epochState:update(batch, loss)
+                batch:nextPiece()
+            end
 
             if iter % opt.report_every == 0 then
                 epochState:log(iter, opt.json_log)
@@ -318,6 +325,11 @@ local function trainModel(model, trainData, validData, dataset, info)
     end
 
     if opt.just_eval then
+        validPpl = eval(model, criterion, validData)
+        if not opt.json_log then
+            print('Validation perplexity: ' .. validPpl)
+        end
+        assert(false) -- would need to make sure batch-pieceing works w/ this
         onmt.train.Greedy.greedy_eval(model, validData, nil, g_tgtDict, 1, 10)
         return
     end
@@ -332,7 +344,7 @@ local function trainModel(model, trainData, validData, dataset, info)
         if not opt.json_log then
             print('Validation perplexity: ' .. validPpl)
         end
-        onmt.train.Greedy.greedy_eval(model, validData, nil, g_tgtDict, 1, 10)
+        --onmt.train.Greedy.greedy_eval(model, validData, nil, g_tgtDict, 1, 10)
 
         if opt.optim == 'sgd' or opt.optim == 'mom' then
             if opt.decay_update2 then

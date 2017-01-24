@@ -86,12 +86,12 @@ function BoxBatch2:__init(srcs, srcFeatures, tgt, tgtFeatures, bsLen,
   local maxIndices = 255 -- I'm just assuming we never get more than this many source locations; deal with it
 
   if tgt ~= nil then
-    self.targetLength, self.targetSize, self.targetNonZeros = getLength(tgt, 1)
+    self.rulTargetLength, self.targetSize, self.targetNonZeros = getLength(tgt, 1)
+    self.targetLength = self.rulTargetLength -- will change this, since this is what decoder looks at
 
-    local targetSeq = torch.IntTensor(self.targetLength, self.size):fill(onmt.Constants.PAD)
+    local targetSeq = torch.IntTensor(self.rulTargetLength, self.size):fill(onmt.Constants.PAD)
     self.targetInput = targetSeq:clone()
-    -- this might be too big
-    self.targetOutput = targetMasks and torch.IntTensor(self.targetLength, self.size, maxIndices+1):zero() or targetSeq:clone()
+    self.targetOutput = targetMasks and torch.IntTensor(self.rulTargetLength, self.size, maxIndices+1):zero() or targetSeq:clone()
   end
 
 
@@ -153,8 +153,20 @@ function BoxBatch2:__init(srcs, srcFeatures, tgt, tgtFeatures, bsLen,
   end
   --print(currRow, self.sourceInput:size(1))
   assert(currRow == self.sourceInput:size(1)+1)
+
+  self.targetOffset = 0 -- used for long target stuff
 end
 
+function BoxBatch2:splitIntoPieces(maxBptt)
+    self.maxBptt = maxBptt
+    self.targetLength = math.min(self.rulTargetLength, maxBptt)
+    return math.ceil(self.rulTargetLength/maxBptt)
+end
+
+function BoxBatch2:nextPiece()
+    self.targetOffset = self.targetOffset + self.maxBptt
+    self.targetLength = math.min(self.rulTargetLength-self.targetOffset, self.maxBptt)
+end
 
 -- maps words to their (linearized) location (for each batch)
 function findSourceLocations(srcs, batchSize, offset)
@@ -190,58 +202,6 @@ end
 --         for t = 1, targetLength do
 --             if srcLocs[b][targetOutput[t]] then
 
-
---[[ Set source input directly,
-
-Parameters:
-
-  * `sourceInput` - a Tensor of size (sequence_length, batch_size, feature_dim)
-  ,or a sequence of size (sequence_length, batch_size). Be aware that sourceInput is not cloned here.
-
---]]
-function BoxBatch2:setSourceInput(sourceInput)
-    assert(false)
-  assert (sourceInput:dim() >= 2, 'The sourceInput tensor should be of size (seq_len, batch_size, ...)')
-  self.size = sourceInput:size(2)
-  self.sourceLength = sourceInput:size(1)
-  self.sourceInputFeatures = {}
-  self.sourceInputRevReatures = {}
-  self.sourceInput = sourceInput
-  self.sourceInputRev = self.sourceInput:index(1, torch.linspace(self.sourceLength, 1, self.sourceLength):long())
-  return self
-end
-
---[[ Set target input directly.
-
-Parameters:
-
-  * `targetInput` - a tensor of size (sequence_length, batch_size). Padded with onmt.Constants.PAD. Be aware that targetInput is not cloned here.
---]]
-function BoxBatch2:setTargetInput(targetInput)
-    assert(false)
-  assert (targetInput:dim() == 2, 'The targetInput tensor should be of size (seq_len, batch_size)')
-  self.targetInput = targetInput
-  self.size = targetInput:size(2)
-  self.totalSize = self.size
-  self.targetLength = targetInput:size(1)
-  self.targetInputFeatures = {}
-  self.targetSize = torch.sum(targetInput:transpose(1,2):ne(onmt.Constants.PAD), 2):view(-1):double()
-  return self
-end
-
---[[ Set target output directly.
-
-Parameters:
-
-  * `targetOutput` - a tensor of size (sequence_length, batch_size). Padded with onmt.Constants.PAD.  Be aware that targetOutput is not cloned here.
---]]
-function BoxBatch2:setTargetOutput(targetOutput)
-    assert(false)
-  assert (targetOutput:dim() == 2, 'The targetOutput tensor should be of size (seq_len, batch_size)')
-  self.targetOutput = targetOutput
-  self.targetOutputFeatures = {}
-  return self
-end
 
 local function addInputFeatures(inputs, featuresSeq, t)
   local features = {}
@@ -286,7 +246,7 @@ end
 --[[ Get target input batch at timestep `t`. --]]
 function BoxBatch2:getTargetInput(t)
   -- If a regular input, return word id, otherwise a table with features.
-  local inputs = self.targetInput[t]
+  local inputs = self.targetInput[self.targetOffset + t]
 
   return inputs
 end
@@ -294,7 +254,7 @@ end
 --[[ Get target output batch at timestep `t` (values t+1). --]]
 function BoxBatch2:getTargetOutput(t)
   -- If a regular input, return word id, otherwise a table with features.
-  local outputs = { self.targetOutput[t] }
+  local outputs = { self.targetOutput[self.targetOffset + t] }
 
   return outputs
 end

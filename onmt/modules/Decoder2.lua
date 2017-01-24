@@ -191,6 +191,19 @@ function Decoder2:maskPadding(sourceSizes, sourceLength, beamSize)
   end)
 end
 
+function Decoder2:remember()
+    self.remember = true
+end
+
+function Decoder2:forget()
+    self.remember = false
+end
+
+-- in remember mode still need to reset at beginning of new sequence
+function Decoder2:resetLastStates()
+    self.lastStates = nil
+end
+
 --[[ Run one step of the decoder.
 
 Parameters:
@@ -263,13 +276,28 @@ function Decoder2:forwardAndApply(batch, encoderStates, context, func)
                                                          { batch.size, self.args.rnnSize })
   end
 
-  local states = onmt.utils.Tensor.copyTensorTable(self.statesProto, encoderStates)
+  local states, prevOut
+  if self.remember and self.lastStates then
+      prevOut = self.lastStates[#self.lastStates]
+      states = {} -- could probably really just pop
+      for i = 1, #self.lastStates-1 do
+          table.insert(states, self.lastStates[i])
+      end
+  else
+      states = onmt.utils.Tensor.copyTensorTable(self.statesProto, encoderStates)
+  end
 
-  local prevOut
+  --local states = onmt.utils.Tensor.copyTensorTable(self.statesProto, encoderStates)
+
+  --local prevOut
 
   for t = 1, batch.targetLength do
     prevOut, states = self:forwardOne(batch:getTargetInput(t), states, context, prevOut, t)
     func(prevOut, t)
+  end
+
+  if self.remember then -- save a pointer to the last output; need to check that this actually works b/c of mem shit
+      self.lastStates = self:net(batch.targetLength).output
   end
 end
 
@@ -355,11 +383,6 @@ function Decoder2:backward(batch, outputs, criterion, ctxLen)
     local gradInput = self:net(t):backward(self.inputs[t], gradStatesInput)
 
     -- Accumulate encoder output gradients.
-    -- print("oy")
-    -- print(gradContextInput:size())
-    -- print(gradInput)
-    -- print(self.args.inputIndex.context)
-    -- print(gradInput[self.args.inputIndex.context]:size())
     gradContextInput:add(gradInput[self.args.inputIndex.context])
     gradStatesInput[#gradStatesInput]:zero()
 
@@ -374,6 +397,11 @@ function Decoder2:backward(batch, outputs, criterion, ctxLen)
     end
   end
 
+  if batch.targetOffset > 0 then -- this is a hack, but the pt is that only used encoder's last state on first piece
+      for i = 1, #self.statesProto do
+          gradStatesInput[i]:zero()
+      end
+  end
   return gradStatesInput, gradContextInput, loss
 end
 
@@ -414,6 +442,7 @@ Parameters:
 
 --]]
 function Decoder2:computeScore(batch, encoderStates, context)
+  assert(false)
   encoderStates = encoderStates
     or onmt.utils.Tensor.initTensorTable(self.args.numEffectiveLayers,
                                          onmt.utils.Cuda.convert(torch.Tensor()),
