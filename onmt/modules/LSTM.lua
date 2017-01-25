@@ -107,12 +107,20 @@ function LSTM:_buildLayer(inputSize, hiddenSize)
   local x = inputs[3]
 
   -- Evaluate the input sums at once for efficiency.
-  local i2h = nn.Linear(inputSize, 4 * hiddenSize)(x)
+  local i2hlin = nn.Linear(inputSize, 4 * hiddenSize)
+  -- for forget init shit
+  i2hlin.name = "i2h"
+  i2hlin.postParametersInitialization = function()
+      -- forget gate is second thing in this big Linear
+      print("setting forget gate bias to 2")
+      i2hlin.bias:sub(hiddenSize+1, 2*hiddenSize):fill(2)
+  end
+  local i2h = i2hlin(x)
   local h2h = nn.Linear(hiddenSize, 4 * hiddenSize, false)(prevH)
   local allInputSums = nn.CAddTable()({i2h, h2h})
 
-  local reshaped = nn.Reshape(4, hiddenSize)(allInputSums)
-  local n1, n2, n3, n4 = nn.SplitTable(2)(reshaped):split(4)
+  local reshaped = nn.Reshape(4, hiddenSize)(allInputSums) -- batchsize x 4 x hiddenSize
+  local n1, n2, n3, n4 = nn.SplitTable(2)(reshaped):split(4) -- length-4 table with batchSize x hiddenSize entries
 
   -- Decode the gates.
   local inGate = nn.Sigmoid()(n1)

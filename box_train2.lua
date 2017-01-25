@@ -329,7 +329,6 @@ local function trainModel(model, trainData, validData, dataset, info)
         if not opt.json_log then
             print('Validation perplexity: ' .. validPpl)
         end
-        assert(false) -- would need to make sure batch-pieceing works w/ this
         onmt.train.Greedy.greedy_eval(model, validData, nil, g_tgtDict, 1, 10)
         return
     end

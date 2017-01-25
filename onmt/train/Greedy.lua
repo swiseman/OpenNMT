@@ -67,10 +67,11 @@ local function greedy_eval(model, data, src_dict, targ_dict,
     local batch = onmt.utils.Cuda.convert(data:getBatch(i))
     local aggEncStates, catCtx = allEncForward(model, batch)
     model.decoder:resetLastStates()
-    probs:reshape(batch.targetLength, batch.size)
+    probs:resize(batch.targetLength, batch.size)
     local preds = model.decoder:greedyFixedFwd(batch, aggEncStates, catCtx, probs)
     if i >= start_print_batch and i <= end_print_batch then
-        print(preds:narrow(2, 1, 50))
+        local brows = math.min(50, batch.targetLength)
+        print(probs:sub(1, brows))
     end
     for n = 1, batch.size do
         -- will just go up to true gold_length

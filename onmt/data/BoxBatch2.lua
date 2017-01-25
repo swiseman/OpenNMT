@@ -90,6 +90,7 @@ function BoxBatch2:__init(srcs, srcFeatures, tgt, tgtFeatures, bsLen,
     self.rulTargetLength, self.rulTargetSize, self.rulTargetNonZeros = getLength(tgt, 1)
     self.targetLength = self.rulTargetLength -- will change this, since this is what decoder looks at
     self.targetNonZeros = self.rulTargetNonZeros
+    self.targetSize = self.rulTargetSize
 
     local targetSeq = torch.IntTensor(self.rulTargetLength, self.size):fill(onmt.Constants.PAD)
     self.targetInput = targetSeq:clone()

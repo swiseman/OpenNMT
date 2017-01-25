@@ -204,6 +204,18 @@ function Decoder:maskPadding(sourceSizes, sourceLength, beamSize)
   end)
 end
 
+function Decoder:remember()
+    self._remember = true
+end
+
+function Decoder:forget()
+    self._remember = false
+end
+
+function Decoder:resetLastStates()
+    self.lastStates = nil
+end
+
 --[[ Run one step of the decoder.
 
 Parameters:
@@ -282,13 +294,28 @@ function Decoder:forwardAndApply(batch, encoderStates, context, func)
                                                          { batch.size, self.args.rnnSize })
   end
 
-  local states = onmt.utils.Tensor.copyTensorTable(self.statesProto, encoderStates)
+  local states, prevOut
+  if self._remember and self.lastStates then
+      prevOut = self.lastStates[#self.lastStates]
+      states = {} -- could probably really just pop
+      for i = 1, #self.lastStates-1 do
+          table.insert(states, self.lastStates[i])
+      end
+  else
+      states = onmt.utils.Tensor.copyTensorTable(self.statesProto, encoderStates)
+  end
 
-  local prevOut
+  --local states = onmt.utils.Tensor.copyTensorTable(self.statesProto, encoderStates)
+
+  --local prevOut
 
   for t = 1, batch.targetLength do
     prevOut, states = self:forwardOne(batch:getTargetInput(t), states, context, prevOut, t)
     func(prevOut, t)
+  end
+
+  if self._remember then
+      self.lastStates = self:net(batch.targetLength).output
   end
 end
 
@@ -415,6 +442,12 @@ function Decoder:backward(batch, outputs, criterion, ctxLen)
     end
   end
 
+  if batch.targetOffset > 0 then -- hack so that we only backprop thru final encoder state at beginning
+      for i = 1, #self.statesProto do
+          gradStatesInput[i]:zero()
+      end
+  end
+
   return gradStatesInput, gradContextInput, loss
 end
 
@@ -455,6 +488,7 @@ Parameters:
 
 --]]
 function Decoder:computeScore(batch, encoderStates, context)
+    assert(false)
   encoderStates = encoderStates
     or onmt.utils.Tensor.initTensorTable(self.args.numEffectiveLayers,
                                          onmt.utils.Cuda.convert(torch.Tensor()),
@@ -474,7 +508,7 @@ function Decoder:computeScore(batch, encoderStates, context)
   return score
 end
 
-function Decoder:greedyFixedFwd(batch, encoderStates, context)
+function Decoder:greedyFixedFwd(batch, encoderStates, context, probBuf)
     if not self.greedy_inp then
         self.greedy_inp = torch.CudaTensor()
         self.maxes = torch.CudaTensor()
@@ -500,6 +534,9 @@ function Decoder:greedyFixedFwd(batch, encoderStates, context)
       prevOut, states = self:forwardOne(self.greedy_inp[t], states, context, prevOut, t)
       local preds = self.generator:forward(prevOut)
       torch.max(self.maxes, self.argmaxes, preds[1], 2)
+      if probBuf then
+          probBuf[t]:copy(self.maxes:view(-1))
+      end
       self.greedy_inp[t+1]:copy(self.argmaxes:view(-1))
     end
     return self.greedy_inp
