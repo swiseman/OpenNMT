@@ -26,7 +26,7 @@ Parameters:
   * `generator` - optional, an output [onmt.Generator](onmt+modules+Generator).
   * `inputFeed` - bool, enable input feeding.
 --]]
-function Decoder2:__init(inputNetwork, rnn, generator, inputFeed)
+function Decoder2:__init(inputNetwork, rnn, generator, inputFeed, version)
   self.rnn = rnn
   self.inputNet = inputNetwork
 
@@ -41,6 +41,7 @@ function Decoder2:__init(inputNetwork, rnn, generator, inputFeed)
   -- vector each time representing the attention at the
   -- previous step.
   self.args.inputFeed = inputFeed
+  self.args.version = version or 2
 
   parent.__init(self, self:_buildModel())
 
@@ -362,6 +363,9 @@ function Decoder2:backward(batch, outputs, criterion, ctxLen)
     -- Note: This would typically be in the forward pass.
     --local pred = self.generator:forward(outputs[t])
     local genInp = {outputs[t], context}
+    if self.args.version > 2 then
+        table.insert(genInp, batch:getSourceWords())
+    end
     local pred = self.generator:forward(genInp)
     local output = batch:getTargetOutput(t)
 
@@ -423,7 +427,11 @@ function Decoder2:computeLoss(batch, encoderStates, context, criterion)
 
   local loss = 0
   self:forwardAndApply(batch, encoderStates, context, function (out, t)
-    local pred = self.generator:forward({out, context})
+    local genInp = {out, context}
+    if self.args.version > 2 then
+        table.insert(genInp, batch:getSourceWords())
+    end
+    local pred = self.generator:forward(genInp)
     local output = batch:getTargetOutput(t)
     loss = loss + criterion:forward(pred, output)
   end)
@@ -451,7 +459,11 @@ function Decoder2:computeScore(batch, encoderStates, context)
   local score = {}
 
   self:forwardAndApply(batch, encoderStates, context, function (out, t)
-    local pred = self.generator:forward({out, context})
+    local genInp = {out, context}
+    if self.version > 2 then
+        table.insert(genInp, batch:getSourceWords())
+    end
+    local pred = self.generator:forward(genInp)
     for b = 1, batch.size do
       if t <= batch.targetSize[b] then
         score[b] = (score[b] or 0) + pred[1][b][batch.targetOutput[t][b]]
@@ -486,15 +498,22 @@ function Decoder2:greedyFixedFwd(batch, encoderStates, context, probBuf)
     self.greedy_inp[1]:copy(batch:getTargetInput(1)) -- should be start token
     for t = 1, batch.targetLength do
       prevOut, states = self:forwardOne(self.greedy_inp[t], states, context, prevOut, t)
-      local preds = self.generator:forward({prevOut, context})[1]
+      local genInp = {prevOut, context}
+      if self.args.version > 2 then
+          table.insert(genInp, batch:getSourceWords())
+      end
+      local preds = self.generator:forward(genInp)[1]
       -- add attn to source (and not worry about unks)
       for b = 1, preds:size(1) do
         local srccells = batch:getCellsForExample(b)
-        for j = 1, srccells:size(1) do
-          -- this works b/c we have the same vocabs
-          preds[b][srccells[j]] = preds[b][srccells[j]] + preds[b][self.generator.outputSize+j]
-          preds[b][self.generator.outputSize+j] = 0
-        end
+        preds[b]:indexAdd(1, srccells, preds[b]:sub(self.generator.outputSize+1, preds:size(2)))
+
+        -- TODO can't I just use indexAdd here?
+        -- for j = 1, srccells:size(1) do
+        --   -- this works b/c we have the same vocabs
+        --   preds[b][srccells[j]] = preds[b][srccells[j]] + preds[b][self.generator.outputSize+j]
+        --   preds[b][self.generator.outputSize+j] = 0
+        -- end
       end
 
       torch.max(self.maxes, self.argmaxes, preds, 2)

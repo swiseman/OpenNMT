@@ -34,6 +34,7 @@ cmd:option('-residual', false, [[Add residual connections between RNN layers.]])
 cmd:option('-just_lm', false, [[No conditioning]])
 cmd:option('-copy_generate', false, [[]])
 cmd:option('-tanh_query', false, [[]])
+cmd:option('-version', 2, [[]])
 
 
 cmd:option('-pool', 'mean', [[mean or max]])

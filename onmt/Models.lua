@@ -112,7 +112,11 @@ local function buildDecoder(opt, dicts, verbose)
   if #dicts.features > 0 then
     generator = onmt.FeaturesGenerator.new(opt.rnn_size, dicts.words:size(), dicts.features)
   elseif opt.copy_generate then
-    generator = onmt.CopyGenerator2.new(opt.rnn_size, dicts.words:size(), opt.tanh_query)
+    if opt.version > 2 then
+        generator = onmt.CopyPOEGenerator.new(opt.rnn_size, dicts.words:size(), opt.tanh_query)
+    else
+        generator = onmt.CopyGenerator2.new(opt.rnn_size, dicts.words:size(), opt.tanh_query)
+    end
   else
     generator = onmt.Generator.new(opt.rnn_size, dicts.words:size())
   end

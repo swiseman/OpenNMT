@@ -45,7 +45,7 @@ Batch interface reference [size]:
 
   Used by the decoder and encoder objects.
 --]]
-local BoxBatch2 = torch.class('BoxBatch2')
+local BoxBatch3 = torch.class('BoxBatch3')
 
 --[[ Create a batch object.
 
@@ -56,8 +56,8 @@ Parameters:
   * `tgt` - 2D table of target batch indices
   * `tgtFeatures` - 2D table of target batch features (opt)
 --]]
-function BoxBatch2:__init(srcs, srcFeatures, tgt, tgtFeatures, bsLen,
-    colStartIdx, nFeatures, targetMasks)
+function BoxBatch3:__init(srcs, srcFeatures, tgt, tgtFeatures, bsLen,
+    colStartIdx, nFeatures)
   local srcs = srcs or {}
 
   if tgt ~= nil then
@@ -78,18 +78,16 @@ function BoxBatch2:__init(srcs, srcFeatures, tgt, tgtFeatures, bsLen,
   self.sourceInput = torch.IntTensor(self.size*self.totalSourceLength, nFeatures)
   --self.sourceInput = sourceSeq:clone()
 
-  local srcLocs
-  if targetMasks then
-      srcLocs = findSourceLocations(srcs, self.size, vocabSize)
-  end
-
   if tgt ~= nil then
-    self.targetLength, self.targetSize, self.targetNonZeros = getLength(tgt, 1)
+    -- N.B. targetSize is now wrongish....
+    self.rulTargetLength, self.rulTargetSize, self.rulTargetNonZeros = getLength(tgt, 1)
+    self.targetLength = self.rulTargetLength -- will change this, since this is what decoder looks at
+    self.targetNonZeros = self.rulTargetNonZeros
+    self.targetSize = self.rulTargetSize
 
-    local targetSeq = torch.IntTensor(self.targetLength, self.size):fill(onmt.Constants.PAD)
+    local targetSeq = torch.IntTensor(self.rulTargetLength, self.size):fill(onmt.Constants.PAD)
     self.targetInput = targetSeq:clone()
-    -- this might be too big
-    self.targetOutput = targetMasks and torch.zeros(self.targetLength, self.size, vocabSize+self.totalSourceLength) or targetSeq:clone()
+    self.targetOutput = targetSeq:clone()
   end
 
 
@@ -133,48 +131,26 @@ function BoxBatch2:__init(srcs, srcFeatures, tgt, tgtFeatures, bsLen,
 
       -- Target is right padded [<S>ABCDEPPPPPP] .
       self.targetInput[{{1, targetLength}, b}]:copy(targetInput)
+      self.targetOutput[{{1, targetLength}, b}]:copy(targetOutput)
 
-      if targetMasks then
-          for t = 1, targetLength do
-              self.targetOutput[t][b][targetOutput[t]] = 1
-              if srcLocs[b][targetOutput[t]] then
-                  self.targetOutput[t][b]:indexFill(1, srcLocs[b][targetOutput[t]], 1)
-              end
-          end
-      else
-          self.targetOutput[{{1, targetLength}, b}]:copy(targetOutput)
-      end
     end
   end
   --print(currRow, self.sourceInput:size(1))
   assert(currRow == self.sourceInput:size(1)+1)
+
+  self.targetOffset = 0 -- used for long target stuff
 end
 
+function BoxBatch3:splitIntoPieces(maxBptt)
+    self.maxBptt = maxBptt
+    self.targetLength = math.min(self.rulTargetLength, maxBptt)
+    return math.ceil(self.rulTargetLength/maxBptt)
+end
 
--- maps words to their (linearized) location (for each batch)
-function findSourceLocations(srcs, batchSize, offset)
-    local srcLocs = tds.Vec()
-    for b = 1, batchSize do
-        b_tbl = {}
-        local srcIdx = 1
-        for j = 1, #srcs do
-            local sourceInput = srcs[j][b]:sub(2, srcs[j][b]:size(1))
-            for t = 1, sourceInput:size(1) do
-                if not b_tbl[sourceInput[t]] then
-                    b_tbl[sourceInput[t]] = {}
-                end
-                table.insert(b_tbl[sourceInput[t]], srcIdx)
-                srcIdx = srcIdx + 1
-            end
-        end
-        -- copy into a tds thing
-        local b_hash = tds.Hash()
-        for k, v in pairs(b_tbl) do
-            b_hash[k] = torch.LongTensor(v):add(offset)
-        end
-        srcLocs:insert(b_hash)
-    end
-    return srcLocs
+function BoxBatch3:nextPiece()
+    self.targetOffset = self.targetOffset + self.maxBptt
+    self.targetLength = math.min(self.rulTargetLength-self.targetOffset, self.maxBptt)
+    self.targetNonZeros = 0 -- so we only count this once...
 end
 
 -- -- would be faster to precompute everything for each minibatch, but might be tricky....
@@ -185,58 +161,6 @@ end
 --         for t = 1, targetLength do
 --             if srcLocs[b][targetOutput[t]] then
 
-
---[[ Set source input directly,
-
-Parameters:
-
-  * `sourceInput` - a Tensor of size (sequence_length, batch_size, feature_dim)
-  ,or a sequence of size (sequence_length, batch_size). Be aware that sourceInput is not cloned here.
-
---]]
-function BoxBatch2:setSourceInput(sourceInput)
-    assert(false)
-  assert (sourceInput:dim() >= 2, 'The sourceInput tensor should be of size (seq_len, batch_size, ...)')
-  self.size = sourceInput:size(2)
-  self.sourceLength = sourceInput:size(1)
-  self.sourceInputFeatures = {}
-  self.sourceInputRevReatures = {}
-  self.sourceInput = sourceInput
-  self.sourceInputRev = self.sourceInput:index(1, torch.linspace(self.sourceLength, 1, self.sourceLength):long())
-  return self
-end
-
---[[ Set target input directly.
-
-Parameters:
-
-  * `targetInput` - a tensor of size (sequence_length, batch_size). Padded with onmt.Constants.PAD. Be aware that targetInput is not cloned here.
---]]
-function BoxBatch2:setTargetInput(targetInput)
-    assert(false)
-  assert (targetInput:dim() == 2, 'The targetInput tensor should be of size (seq_len, batch_size)')
-  self.targetInput = targetInput
-  self.size = targetInput:size(2)
-  self.totalSize = self.size
-  self.targetLength = targetInput:size(1)
-  self.targetInputFeatures = {}
-  self.targetSize = torch.sum(targetInput:transpose(1,2):ne(onmt.Constants.PAD), 2):view(-1):double()
-  return self
-end
-
---[[ Set target output directly.
-
-Parameters:
-
-  * `targetOutput` - a tensor of size (sequence_length, batch_size). Padded with onmt.Constants.PAD.  Be aware that targetOutput is not cloned here.
---]]
-function BoxBatch2:setTargetOutput(targetOutput)
-    assert(false)
-  assert (targetOutput:dim() == 2, 'The targetOutput tensor should be of size (seq_len, batch_size)')
-  self.targetOutput = targetOutput
-  self.targetOutputFeatures = {}
-  return self
-end
 
 local function addInputFeatures(inputs, featuresSeq, t)
   local features = {}
@@ -251,7 +175,7 @@ local function addInputFeatures(inputs, featuresSeq, t)
 end
 
 --[[ Get source batch at timestep `t`. --]]
-function BoxBatch2:getSourceInput(t)
+function BoxBatch3:getSourceInput(t)
     assert(false)
   -- If a regular input, return word id, otherwise a table with features.
   local inputs = self.sourceInput[self.inputRow][t]
@@ -269,24 +193,33 @@ function BoxBatch2:getSourceInput(t)
 end
 
 -- returns a nRows*srcLen x batchSize tensor
-function BoxBatch2:getSource()
+function BoxBatch3:getSource()
     return self.sourceInput
 end
 
+function BoxBatch3:getSourceWords()
+    return self.sourceInput:select(2,1):reshape(self.size, self.totalSourceLength)
+end
+
+function BoxBatch3:getCellsForExample(b)
+    return self.sourceInput
+      :sub((b-1)*self.totalSourceLength+1, b*self.totalSourceLength):select(2,1)
+end
+
 --[[ Get target input batch at timestep `t`. --]]
-function BoxBatch2:getTargetInput(t)
+function BoxBatch3:getTargetInput(t)
   -- If a regular input, return word id, otherwise a table with features.
-  local inputs = self.targetInput[t]
+  local inputs = self.targetInput[self.targetOffset + t]
 
   return inputs
 end
 
 --[[ Get target output batch at timestep `t` (values t+1). --]]
-function BoxBatch2:getTargetOutput(t)
+function BoxBatch3:getTargetOutput(t)
   -- If a regular input, return word id, otherwise a table with features.
-  local outputs = { self.targetOutput[t] }
+  local outputs = { self.targetOutput[self.targetOffset + t] }
 
   return outputs
 end
 
-return BoxBatch2
+return BoxBatch3

@@ -1,12 +1,13 @@
 --[[
- This takes ctx, gets unnormalized attn, gets regular unnormalized linear word-scores,
- and then softmaxes the whole thing. Thus we get p(word=w,copy=z) for each word w and z \in {0, 1}.
- This is appropriate for a criterion that will then marginalize over z. 
+ This takes ctx, gets unnormalized attn, and adds those scores to unnormalized
+ word scores, and then logsoftmaxes. This is a product of experts model, so either
+ attn or output can veto.
+ A regular ClassNLLCriterion should be used.
 --]]
-local CopyGenerator2, parent = torch.class('onmt.CopyGenerator2', 'nn.Container')
+local CopyPOEGenerator, parent = torch.class('onmt.CopyPOEGenerator', 'nn.Container')
 
 
-function CopyGenerator2:__init(rnnSize, outputSize, tanhQuery)
+function CopyPOEGenerator:__init(rnnSize, outputSize, tanhQuery)
   parent.__init(self)
   self.net = self:_buildGenerator(rnnSize, outputSize, tanhQuery)
   self:add(self.net)
@@ -14,9 +15,10 @@ function CopyGenerator2:__init(rnnSize, outputSize, tanhQuery)
 end
 
 -- N.B. this uses attnLayer, but should maybe use last real layer (in which case we need 3 inputs)
-function CopyGenerator2:_buildGenerator(rnnSize, outputSize, tanhQuery)
+function CopyPOEGenerator:_buildGenerator(rnnSize, outputSize, tanhQuery)
     local tstate = nn.Identity()() -- attnlayer (numEffectiveLayers+1)
     local context = nn.Identity()()
+    local srcIdxs = nn.Identity()()
 
     -- get unnormalized attn scores
     local targetT = nn.Linear(rnnSize, rnnSize)(tstate)
@@ -28,21 +30,22 @@ function CopyGenerator2:_buildGenerator(rnnSize, outputSize, tanhQuery)
 
     -- concatenate with regular output shit
     local regularOutput = nn.Linear(rnnSize, outputSize)(tstate)
-    local catDist = nn.SoftMax()(nn.JoinTable(2)({regularOutput, attn}))
-    return nn.gModule({tstate, context}, {catDist})
+    local addedOutput = nn.CIndexAddTo()({regularOutput, attn, srcIdxs})
+    local scores = nn.LogSoftMax()(addedOutput)
+    return nn.gModule({tstate, context, srcIdxs}, {scores})
 
 end
 
-function CopyGenerator2:updateOutput(input)
+function CopyPOEGenerator:updateOutput(input)
   self.output = {self.net:updateOutput(input)}
   return self.output
 end
 
-function CopyGenerator2:updateGradInput(input, gradOutput)
+function CopyPOEGenerator:updateGradInput(input, gradOutput)
   self.gradInput = self.net:updateGradInput(input, gradOutput[1])
   return self.gradInput
 end
 
-function CopyGenerator2:accGradParameters(input, gradOutput, scale)
+function CopyPOEGenerator:accGradParameters(input, gradOutput, scale)
   self.net:accGradParameters(input, gradOutput[1], scale)
 end
