@@ -399,8 +399,10 @@ local function main()
 
   g_tgtDict = dataset.dicts.tgt.words
 
-  local trainData = onmt.data.BoxDataset2.new(dataset.train.src, dataset.train.tgt, colStartIdx, g_nFeatures, opt.copy_generate)
-  local validData = onmt.data.BoxDataset2.new(dataset.valid.src, dataset.valid.tgt, colStartIdx, g_nFeatures, opt.copy_generate)
+  local trainData = onmt.data.BoxDataset2.new(dataset.train.src, dataset.train.tgt,
+    colStartIdx, g_nFeatures, opt.copy_generate, opt.version)
+  local validData = onmt.data.BoxDataset2.new(dataset.valid.src, dataset.valid.tgt,
+    colStartIdx, g_nFeatures, opt.copy_generate, opt.version)
 
   trainData:setBatchSize(opt.max_batch_size)
   validData:setBatchSize(opt.max_batch_size)

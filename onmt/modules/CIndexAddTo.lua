@@ -1,12 +1,13 @@
 local CIndexAddTo, parent = torch.class('nn.CIndexAddTo', 'nn.Module')
 
-function CIndexAddTo:__init(ip, maxbatchsize)
+function CIndexAddTo:__init(ip, maxbatchsize, maxcols)
     parent.__init(self)
     self.inplace = ip -- only good for one arg
     self.gradInput = {}
     self.maxbatchsize = maxbatchsize or 64
+    self.maxcols = maxcols or 1000
     self.range = torch.range(0, 63)
-    self.cols = torch.Tensor(self.maxbatchsize)
+    self.cols = torch.Tensor(self.maxcols)
     self.outerprod = torch.Tensor()
 end
 

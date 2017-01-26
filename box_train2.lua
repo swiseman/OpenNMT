@@ -34,7 +34,7 @@ cmd:option('-residual', false, [[Add residual connections between RNN layers.]])
 cmd:option('-just_lm', false, [[No conditioning]])
 cmd:option('-copy_generate', false, [[]])
 cmd:option('-tanh_query', false, [[]])
-cmd:option('-version', 2, [[]])
+cmd:option('-poe', false, [[]])
 
 
 cmd:option('-pool', 'mean', [[mean or max]])
@@ -158,13 +158,13 @@ local function buildCriterion(vocabSize, features)
     criterion:add(nll)
   end
 
-  if opt.copy_generate then
-      local marginalCrit = onmt.MarginalNLLCriterion(onmt.Constants.PAD)
-      marginalCrit.sizeAverage = false
-      criterion:add(marginalCrit)
-  else
+  -- if opt.copy_generate then
+  --     local marginalCrit = onmt.MarginalNLLCriterion(onmt.Constants.PAD)
+  --     marginalCrit.sizeAverage = false
+  --     criterion:add(marginalCrit)
+  -- else
       addNllCriterion(vocabSize)
-  end
+  --end
 
   for j = 1, #features do
     addNllCriterion(features[j]:size())
