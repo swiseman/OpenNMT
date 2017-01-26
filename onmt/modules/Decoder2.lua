@@ -26,7 +26,7 @@ Parameters:
   * `generator` - optional, an output [onmt.Generator](onmt+modules+Generator).
   * `inputFeed` - bool, enable input feeding.
 --]]
-function Decoder2:__init(inputNetwork, rnn, generator, inputFeed)
+function Decoder2:__init(inputNetwork, rnn, generator, inputFeed, doubleOutput)
   self.rnn = rnn
   self.inputNet = inputNetwork
 
@@ -41,7 +41,7 @@ function Decoder2:__init(inputNetwork, rnn, generator, inputFeed)
   -- vector each time representing the attention at the
   -- previous step.
   self.args.inputFeed = inputFeed
-  --self.args.version = version or 2
+  self.args.doubleOutput = doubleOutput
 
   parent.__init(self, self:_buildModel())
 
@@ -148,7 +148,13 @@ function Decoder2:_buildModel()
   -- Compute the attention here using h^L as query.
   local attnLayer = onmt.GlobalAttention(self.args.rnnSize)
   attnLayer.name = 'decoderAttn'
-  local attnOutput = attnLayer({outputs[#outputs], context})
+  local preAttnLayer
+  if self.args.doubleOutput then
+      preAttnLayer = nn.Narrow(2, 1, self.args.rnnSize)(outputs[#outputs])
+  else
+      preAttnLayer = outputs[#outputs]
+  end
+  local attnOutput = attnLayer({preAttnLayer, context})
   if self.rnn.dropout > 0 then
     attnOutput = nn.Dropout(self.rnn.dropout)(attnOutput)
   end
@@ -258,6 +264,26 @@ function Decoder2:forwardOne(input, prevStates, context, prevOut, t)
   return out, states
 end
 
+local function getProtoSizes(batchSize, rnnSize, numEffectiveLayers, doubleOutput, forGradOut)
+    local sizes
+    if doubleOutput then
+        sizes = {}
+        for i = 1, numEffectiveLayers/2 -1 do
+             table.insert(sizes, {batchSize, rnnSize})
+             table.insert(sizes, {batchSize, rnnSize})
+        end
+        table.insert(sizes, {batchSize, 2*rnnSize})
+        table.insert(sizes, {batchSize, 2*rnnSize})
+        if forGradOut then
+            table.insert(sizes, {batchSize, rnnSize})
+        end
+    else
+        sizes = {batchSize, rnnSize}
+    end
+    return sizes
+end
+
+
 --[[Compute all forward steps.
 
   Parameters:
@@ -271,21 +297,28 @@ end
 function Decoder2:forwardAndApply(batch, encoderStates, context, func)
   -- TODO: Make this a private method.
 
+  local laySizes = getProtoSizes(batch.size, self.args.rnnSize,
+    self.args.numEffectiveLayers, self.args.doubleOutput)
+
   if self.statesProto == nil then
     self.statesProto = onmt.utils.Tensor.initTensorTable(self.args.numEffectiveLayers,
                                                          self.stateProto,
-                                                         { batch.size, self.args.rnnSize })
+                                                         laySizes)
   end
 
   local states, prevOut
-  if self._remember and self.lastStates then
+  if self._remember and self.lastStates then -- N.B. this probably breaks if BPTT window < 2
       prevOut = self.lastStates[#self.lastStates]
       states = {} -- could probably really just pop
       for i = 1, #self.lastStates-1 do
           table.insert(states, self.lastStates[i])
       end
   else
-      states = onmt.utils.Tensor.copyTensorTable(self.statesProto, encoderStates)
+      if self.args.doubleOutput then
+          states = onmt.utils.Tensor.copyTensorTableHalf(self.statesProto, encoderStates)
+      else
+          states = onmt.utils.Tensor.copyTensorTable(self.statesProto, encoderStates)
+      end
   end
 
   --local states = onmt.utils.Tensor.copyTensorTable(self.statesProto, encoderStates)
@@ -294,7 +327,7 @@ function Decoder2:forwardAndApply(batch, encoderStates, context, func)
 
   for t = 1, batch.targetLength do
     prevOut, states = self:forwardOne(batch:getTargetInput(t), states, context, prevOut, t)
-    func(prevOut, t)
+    func(prevOut, t, states[#states])
   end
 
   if self._remember then -- save a pointer to the last output; need to check that this actually works b/c of mem shit
@@ -313,7 +346,7 @@ end
   Returns: Table of top hidden state for each timestep.
 --]]
 function Decoder2:forward(batch, encoderStates, context)
-  encoderStates = encoderStates
+  local encoderStates = encoderStates
     or onmt.utils.Tensor.initTensorTable(self.args.numEffectiveLayers,
                                          onmt.utils.Cuda.convert(torch.Tensor()),
                                          { batch.size, self.args.rnnSize })
@@ -342,15 +375,17 @@ Parameters:
   It returns both the gradInputs and the loss.
   -- ]]
 function Decoder2:backward(batch, outputs, criterion, ctxLen)
+  local laySizes = getProtoSizes(batch.size, self.args.rnnSize,
+      self.args.numEffectiveLayers, self.args.doubleOutput, true)
   if self.gradOutputsProto == nil then
     self.gradOutputsProto = onmt.utils.Tensor.initTensorTable(self.args.numEffectiveLayers + 1,
                                                               self.gradOutputProto,
-                                                              { batch.size, self.args.rnnSize })
+                                                              laySizes)
   end
 
   local ctxLen = ctxLen or batch.sourceLength -- for back compat
   local gradStatesInput = onmt.utils.Tensor.reuseTensorTable(self.gradOutputsProto,
-                                                             { batch.size, self.args.rnnSize })
+                                                             laySizes)
   local gradContextInput = onmt.utils.Tensor.reuseTensor(self.gradContextProto,
                                                          { batch.size, ctxLen, self.args.rnnSize })
 
@@ -362,7 +397,12 @@ function Decoder2:backward(batch, outputs, criterion, ctxLen)
     -- Compute decoder output gradients.
     -- Note: This would typically be in the forward pass.
     --local pred = self.generator:forward(outputs[t])
-    local genInp = {outputs[t], context, batch:getSourceWords()}
+    local genInp
+    if self.args.doubleOutput then
+        genInp = {outputs[t], context, self:net(t).output[self.args.numEffectiveLayers], batch:getSourceWords()}
+    else
+        genInp = {outputs[t], context, batch:getSourceWords()}
+    end
     local pred = self.generator:forward(genInp)
     local output = batch:getTargetOutput(t)
 
@@ -379,8 +419,11 @@ function Decoder2:backward(batch, outputs, criterion, ctxLen)
     --gradStatesInput[#gradStatesInput]:add(decGradOut)
     gradStatesInput[#gradStatesInput]:add(decGradOut[1])
     gradContextInput:add(decGradOut[2])
+    if self.args.doubleOutput then
+        gradStatesInput[self.args.numEffectiveLayers]:add(decGradOut[3])
+    end
 
-    -- Compute the standarad backward.
+    -- Compute the standard backward.
     local gradInput = self:net(t):backward(self.inputs[t], gradStatesInput)
 
     -- Accumulate encoder output gradients.
@@ -423,8 +466,13 @@ function Decoder2:computeLoss(batch, encoderStates, context, criterion)
                                          { batch.size, self.args.rnnSize })
 
   local loss = 0
-  self:forwardAndApply(batch, encoderStates, context, function (out, t)
-    local genInp = {out, context, batch:getSourceWords()}
+  self:forwardAndApply(batch, encoderStates, context, function (out, t, finalState)
+    local genInp
+    if self.args.doubleOutput then
+        genInp = {out, context, finalState, batch:getSourceWords()}
+    else
+        genInp = {out, context, batch:getSourceWords()}
+    end
     local pred = self.generator:forward(genInp)
     local output = batch:getTargetOutput(t)
     loss = loss + criterion:forward(pred, output)
@@ -452,8 +500,14 @@ function Decoder2:computeScore(batch, encoderStates, context)
 
   local score = {}
 
-  self:forwardAndApply(batch, encoderStates, context, function (out, t)
-    local genInp = {out, context, batch:getSourceWords()}
+  self:forwardAndApply(batch, encoderStates, context, function (out, t, finalState)
+    --local genInp = {out, context, batch:getSourceWords()}
+    local genInp
+    if self.args.doubleOutput then
+        genInp = {out, context, finalState, batch:getSourceWords()}
+    else
+        genInp = {out, context, batch:getSourceWords()}
+    end
     local pred = self.generator:forward(genInp)
     for b = 1, batch.size do
       if t <= batch.targetSize[b] then
@@ -489,7 +543,13 @@ function Decoder2:greedyFixedFwd(batch, encoderStates, context, probBuf)
     self.greedy_inp[1]:copy(batch:getTargetInput(1)) -- should be start token
     for t = 1, batch.targetLength do
       prevOut, states = self:forwardOne(self.greedy_inp[t], states, context, prevOut, t)
-      local genInp = {prevOut, context, batch:getSourceWords()}
+      --local genInp = {prevOut, context, batch:getSourceWords()}
+      local genInp
+      if self.args.doubleOutput then
+          genInp = {out, context, states[#states], batch:getSourceWords()}
+      else
+          genInp = {out, context, batch:getSourceWords()}
+      end
       local preds = self.generator:forward(genInp)[1]
       -- add attn to source (and not worry about unks)
       for b = 1, preds:size(1) do

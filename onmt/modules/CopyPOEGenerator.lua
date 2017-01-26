@@ -7,21 +7,26 @@
 local CopyPOEGenerator, parent = torch.class('onmt.CopyPOEGenerator', 'nn.Container')
 
 
-function CopyPOEGenerator:__init(rnnSize, outputSize, tanhQuery)
+function CopyPOEGenerator:__init(rnnSize, outputSize, tanhQuery, doubleOutput)
   parent.__init(self)
-  self.net = self:_buildGenerator(rnnSize, outputSize, tanhQuery)
+  self.net = self:_buildGenerator(rnnSize, outputSize, tanhQuery, doubleOutput)
   self:add(self.net)
   self.outputSize = outputSize
 end
 
 -- N.B. this uses attnLayer, but should maybe use last real layer (in which case we need 3 inputs)
-function CopyPOEGenerator:_buildGenerator(rnnSize, outputSize, tanhQuery)
+function CopyPOEGenerator:_buildGenerator(rnnSize, outputSize, tanhQuery, doubleOutput)
     local tstate = nn.Identity()() -- attnlayer (numEffectiveLayers+1)
     local context = nn.Identity()()
+    local pstate
+    if doubleOutput then
+        pstate = nn.Identity()()
+    end
     local srcIdxs = nn.Identity()()
 
     -- get unnormalized attn scores
-    local targetT = nn.Linear(rnnSize, rnnSize)(tstate)
+    local qstate = doubleOutput and nn.Narrow(2, rnnSize+1, rnnSize)(pstate) or tstate
+    local targetT = nn.Linear(rnnSize, rnnSize)(qstate)
     if tanhQuery then
         targetT = nn.Tanh()(targetT)
     end
@@ -32,7 +37,13 @@ function CopyPOEGenerator:_buildGenerator(rnnSize, outputSize, tanhQuery)
     local regularOutput = nn.Linear(rnnSize, outputSize)(tstate)
     local addedOutput = nn.CIndexAddTo()({regularOutput, attn, srcIdxs})
     local scores = nn.LogSoftMax()(addedOutput)
-    return nn.gModule({tstate, context, srcIdxs}, {scores})
+    local inputs
+    if doubleOutput then
+        inputs = {tstate, context, pstate, srcIdxs}
+    else
+        inputs = {tstate, context, srcIdxs}
+    end
+    return nn.gModule(inputs, {scores})
 
 end
 

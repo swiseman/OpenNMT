@@ -113,9 +113,9 @@ local function buildDecoder(opt, dicts, verbose)
     generator = onmt.FeaturesGenerator.new(opt.rnn_size, dicts.words:size(), dicts.features)
   elseif opt.copy_generate then
     if opt.poe then
-        generator = onmt.CopyPOEGenerator.new(opt.rnn_size, dicts.words:size(), opt.tanh_query)
+        generator = onmt.CopyPOEGenerator.new(opt.rnn_size, dicts.words:size(), opt.tanh_query, opt.double_output)
     else
-        generator = onmt.CopyGenerator2.new(opt.rnn_size, dicts.words:size(), opt.tanh_query)
+        generator = onmt.CopyGenerator2.new(opt.rnn_size, dicts.words:size(), opt.tanh_query, opt.double_output)
     end
   else
     generator = onmt.Generator.new(opt.rnn_size, dicts.words:size())
@@ -128,10 +128,10 @@ local function buildDecoder(opt, dicts, verbose)
     inputSize = inputSize + opt.rnn_size
   end
 
-  local rnn = onmt.LSTM.new(opt.layers, inputSize, opt.rnn_size, opt.dropout, opt.residual)
+  local rnn = onmt.LSTM.new(opt.layers, inputSize, opt.rnn_size, opt.dropout, opt.residual, opt.double_output)
 
   if opt.copy_generate then
-    return onmt.Decoder2.new(inputNetwork, rnn, generator, opt.input_feed == 1)
+    return onmt.Decoder2.new(inputNetwork, rnn, generator, opt.input_feed == 1, opt.double_output)
   else
     return onmt.Decoder.new(inputNetwork, rnn, generator, opt.input_feed == 1,
       opt.copy_generate, opt.tanh_query)

@@ -33,7 +33,7 @@ Parameters:
   * `dropout` - Dropout rate to use.
   * `residual` - Residual connections between layers.
 --]]
-function LSTM:__init(layers, inputSize, hiddenSize, dropout, residual)
+function LSTM:__init(layers, inputSize, hiddenSize, dropout, residual, doubleOutput)
   parent.__init(self)
 
   dropout = dropout or 0
@@ -42,12 +42,12 @@ function LSTM:__init(layers, inputSize, hiddenSize, dropout, residual)
   self.numEffectiveLayers = 2 * layers
   self.outputSize = hiddenSize
 
-  self.net = self:_buildModel(layers, inputSize, hiddenSize, dropout, residual)
+  self.net = self:_buildModel(layers, inputSize, hiddenSize, dropout, residual, doubleOutput)
   self:add(self.net)
 end
 
 --[[ Stack the LSTM units. ]]
-function LSTM:_buildModel(layers, inputSize, hiddenSize, dropout, residual)
+function LSTM:_buildModel(layers, inputSize, hiddenSize, dropout, residual, doubleOutput)
   local inputs = {}
   local outputs = {}
 
@@ -85,7 +85,12 @@ function LSTM:_buildModel(layers, inputSize, hiddenSize, dropout, residual)
     local prevC = inputs[L*2 - 1]
     local prevH = inputs[L*2]
 
-    nextC, nextH = self:_buildLayer(inputDim, hiddenSize)({prevC, prevH, input}):split(2)
+    local hidMult = 1
+    if L == layers and doubleOutput then
+        hidMult = 2
+    end
+
+    nextC, nextH = self:_buildLayer(inputDim, hidMult*hiddenSize)({prevC, prevH, input}):split(2)
     prevInput = input
 
     table.insert(outputs, nextC)

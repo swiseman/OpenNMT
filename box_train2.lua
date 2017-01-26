@@ -43,6 +43,7 @@ cmd:option('-enc_emb_size', 200, [[]])
 cmd:option('-enc_dropout', 0, [[]])
 cmd:option('-enc_relu', false, [[]])
 cmd:option('-enc_tanh_output', false, [[]])
+cmd:option('-double_output', false, [[]])
 
 cmd:text("")
 cmd:text("**Optimization options**")
