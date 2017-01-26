@@ -143,7 +143,7 @@ local function copyTensorTableHalf(proto, src)
     local tab = {}
     assert(#proto == #src)
     for i = 1, #proto do
-        proto[i]:zero() -- unnecessary
+        proto[i]:resize(src[i]:size(1), proto[i]:size(2)):zero() -- unnecessary
         if src[i]:size(2) < proto[i]:size(2) then
             assert(proto[i]:size(2) == src[i]:size(2)*2)
             proto[i]:narrow(2,1,src[i]:size(2)):copy(src[i])

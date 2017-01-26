@@ -441,6 +441,11 @@ function Decoder2:backward(batch, outputs, criterion, ctxLen)
     end
   end
 
+  if self.args.doubleOutput then
+      gradStatesInput[self.args.numEffectiveLayers] = gradStatesInput[self.args.numEffectiveLayers]:narrow(2, 1, self.args.rnnSize)
+      gradStatesInput[self.args.numEffectiveLayers-1] = gradStatesInput[self.args.numEffectiveLayers-1]:narrow(2, 1, self.args.rnnSize)
+  end
+
   if batch.targetOffset > 0 then -- this is a hack, but the pt is that only used encoder's last state on first piece
       for i = 1, #self.statesProto do
           gradStatesInput[i]:zero()
