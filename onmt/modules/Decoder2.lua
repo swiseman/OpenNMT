@@ -441,10 +441,18 @@ function Decoder2:backward(batch, outputs, criterion, ctxLen)
     end
   end
 
+  -- if self.args.doubleOutput then
+  --     gradStatesInput[self.args.numEffectiveLayers] = gradStatesInput[self.args.numEffectiveLayers]:narrow(2, 1, self.args.rnnSize)
+  --     gradStatesInput[self.args.numEffectiveLayers-1] = gradStatesInput[self.args.numEffectiveLayers-1]:narrow(2, 1, self.args.rnnSize)
+  -- end
+  local finalLayer, rnnSize = self.args.numEffectiveLayers, self.args.rnnSize
   if self.args.doubleOutput then
-      gradStatesInput[self.args.numEffectiveLayers] = gradStatesInput[self.args.numEffectiveLayers]:narrow(2, 1, self.args.rnnSize)
-      gradStatesInput[self.args.numEffectiveLayers-1] = gradStatesInput[self.args.numEffectiveLayers-1]:narrow(2, 1, self.args.rnnSize)
+      gradStatesInput[finalLayer]:narrow(2,1,rnnSize):add(gradStatesInput[finalLayer]:narrow(2,rnnSize+1,rnnSize))
+      gradStatesInput[finalLayer] = gradStatesInput[finalLayer]:narrow(2,1,rnnSize)
+      gradStatesInput[finalLayer-1]:narrow(2,1,rnnSize):add(gradStatesInput[finalLayer-1]:narrow(2,rnnSize+1,rnnSize))
+      gradStatesInput[finalLayer-1] = gradStatesInput[finalLayer-1]:narrow(2,1,rnnSize)
   end
+  
 
   if batch.targetOffset > 0 then -- this is a hack, but the pt is that only used encoder's last state on first piece
       for i = 1, #self.statesProto do
@@ -465,13 +473,14 @@ Parameters:
 
 --]]
 function Decoder2:computeLoss(batch, encoderStates, context, criterion)
-  encoderStates = encoderStates
+  local encoderStates = encoderStates
     or onmt.utils.Tensor.initTensorTable(self.args.numEffectiveLayers,
                                          onmt.utils.Cuda.convert(torch.Tensor()),
                                          { batch.size, self.args.rnnSize })
 
   local loss = 0
   self:forwardAndApply(batch, encoderStates, context, function (out, t, finalState)
+    --print(torch.abs(out):sum())
     local genInp
     if self.args.doubleOutput then
         genInp = {out, context, finalState, batch:getSourceWords()}
@@ -481,7 +490,9 @@ function Decoder2:computeLoss(batch, encoderStates, context, criterion)
     local pred = self.generator:forward(genInp)
     local output = batch:getTargetOutput(t)
     loss = loss + criterion:forward(pred, output)
+    --print("loss", loss)
   end)
+  --print("")
 
   return loss
 end
@@ -535,15 +546,21 @@ function Decoder2:greedyFixedFwd(batch, encoderStates, context, probBuf)
     self.maxes:resize(batch.size, 1)
     self.argmaxes:resize(batch.size, 1)
 
+    local laySizes = getProtoSizes(batch.size, self.args.rnnSize,
+      self.args.numEffectiveLayers, self.args.doubleOutput)
+
     if self.statesProto == nil then
       self.statesProto = onmt.utils.Tensor.initTensorTable(self.args.numEffectiveLayers,
                                                            self.stateProto,
-                                                           { batch.size, self.args.rnnSize })
+                                                           laySizes)
     end
 
-    local states = onmt.utils.Tensor.copyTensorTable(self.statesProto, encoderStates)
-
-    local prevOut
+    local states, prevOut
+    if self.args.doubleOutput then
+        states = onmt.utils.Tensor.copyTensorTableHalf(self.statesProto, encoderStates)
+    else
+        states = onmt.utils.Tensor.copyTensorTable(self.statesProto, encoderStates)
+    end
 
     self.greedy_inp[1]:copy(batch:getTargetInput(1)) -- should be start token
     for t = 1, batch.targetLength do
@@ -551,23 +568,24 @@ function Decoder2:greedyFixedFwd(batch, encoderStates, context, probBuf)
       --local genInp = {prevOut, context, batch:getSourceWords()}
       local genInp
       if self.args.doubleOutput then
-          genInp = {out, context, states[#states], batch:getSourceWords()}
+          genInp = {prevOut, context, states[#states], batch:getSourceWords()}
       else
-          genInp = {out, context, batch:getSourceWords()}
+          genInp = {prevOut, context, batch:getSourceWords()}
       end
       local preds = self.generator:forward(genInp)[1]
-      -- add attn to source (and not worry about unks)
-      for b = 1, preds:size(1) do
-        local srccells = batch:getCellsForExample(b)
-        preds[b]:indexAdd(1, srccells, preds[b]:sub(self.generator.outputSize+1, preds:size(2)))
-
-        -- TODO can't I just use indexAdd here?
-        -- for j = 1, srccells:size(1) do
-        --   -- this works b/c we have the same vocabs
-        --   preds[b][srccells[j]] = preds[b][srccells[j]] + preds[b][self.generator.outputSize+j]
-        --   preds[b][self.generator.outputSize+j] = 0
-        -- end
-      end
+      -- generators do the marginalization/expertization
+    --   -- add attn to source (and not worry about unks)
+    --   for b = 1, preds:size(1) do
+    --     local srccells = batch:getCellsForExample(b)
+    --     preds[b]:indexAdd(1, srccells, preds[b]:sub(self.generator.outputSize+1, preds:size(2)))
+      --
+    --     -- TODO can't I just use indexAdd here?
+    --     -- for j = 1, srccells:size(1) do
+    --     --   -- this works b/c we have the same vocabs
+    --     --   preds[b][srccells[j]] = preds[b][srccells[j]] + preds[b][self.generator.outputSize+j]
+    --     --   preds[b][self.generator.outputSize+j] = 0
+    --     -- end
+    --   end
 
       torch.max(self.maxes, self.argmaxes, preds, 2)
       if probBuf then

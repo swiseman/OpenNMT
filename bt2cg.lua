@@ -118,19 +118,20 @@ local function initParams(model, verbose)
 
     if opt.train_from:len() == 0 then
         p:uniform(-opt.param_init, opt.param_init)
-        -- do module specific init; wordembeddings will happen multiple times,
-        -- but who cares
-        for k, mod in pairs(model) do
-            mod:apply(function (m)
-                if m.postParametersInitialization then
-                    m:postParametersInitialization()
-                end
-            end)
-        end        
     else
         print("copying loaded params...")
         local checkpoint = torch.load(opt.train_from)
         p:copy(checkpoint.flatParams[1])
+    end
+
+    -- do module specific init; wordembeddings will happen multiple times,
+    -- but who cares
+    for k, mod in pairs(model) do
+        mod:apply(function (m)
+            if m.postParametersInitialization then
+                m:postParametersInitialization()
+            end
+        end)
     end
 
     numParams = numParams + p:size(1)
@@ -283,27 +284,119 @@ local function trainModel(model, trainData, validData, dataset, info)
         model.decoder:remember()
         for i = startI, trainData:batchCount() do
             local batchIdx = epoch <= opt.curriculum and i or batchOrder[i]
+            batchIdx = 1
             local batch =  trainData:getBatch(batchIdx)
             batch.totalSize = batch.size -- fuck off
             onmt.utils.Cuda.convert(batch)
 
             local batchPieces = batch:splitIntoPieces(opt.max_bptt)
             model.decoder:resetLastStates() -- don't use saved last state for new batch
-            for j = 1, batchPieces do
-                optim:zeroGrad(gradParams)
+
+            --for j = 1, batchPieces do
+            optim:zeroGrad(gradParams)
+            local aggEncStates, catCtx = allEncForward(model, batch)
+            local ctxLen = catCtx:size(2)
+
+            local decOutputs = model.decoder:forward(batch, aggEncStates, catCtx)
+            local encGradStatesOut, gradContext, loss = model.decoder:backward(batch, decOutputs, criterion, ctxLen)
+            allEncBackward(model, batch, encGradStatesOut, gradContext)
+            --print("ey", gradParams[1]:norm())
+
+            local getloss = function()
                 local aggEncStates, catCtx = allEncForward(model, batch)
                 local ctxLen = catCtx:size(2)
+                model.decoder:resetLastStates()
+                local loss = model.decoder:computeLoss(batch, aggEncStates, catCtx, criterion)
+                -- assuming max_bptt is short enough that we don't get to ignores
+                return loss/(batch.size) -- during training we don't normalize by seqlen
+            end
 
-                local decOutputs = model.decoder:forward(batch, aggEncStates, catCtx)
-                local encGradStatesOut, gradContext, loss = model.decoder:backward(batch, decOutputs, criterion, ctxLen)
-                allEncBackward(model, batch, encGradStatesOut, gradContext)
+            local eps = 1e-5
+            -- print(batch:getTargetOutput(1)[1])
+            -- print(batch:getTargetOutput(2)[1])
+            -- print(batch:getTargetOutput(3)[1])
+
+            print(batch:getTargetInput(1))
+            print(batch:getTargetInput(2))
+            print(batch:getTargetInput(3))
+
+            -- assert(false)
+            --print(model.decoder.modules[1].modules)
+            -- for wang, dong in ipairs(model.decoder.modules[1].modules) do
+            --     print(wang, dong)
+            -- end
+            -- for wang, dong in ipairs(model.decoder.modules[1].modules[7].modules[1].modules[4].modules) do
+            --     print(wang, dong)
+            -- end
+            -- for wang, dong in ipairs(model.encoder.modules[1].modules) do
+            --     print(wang, dong)
+            -- end
+            -- assert(false)
+            --local chosenmod = model.decoder.generator.modules[1].modules[2]
+            --local chosenmod = model.decoder.modules[1].modules[7].modules[1].modules[4].modules[2]
+            local chosenmod = model.encoder.modules[1].modules[2]
+            --local chosenmod = model.encoder.modules[1].modules[12]
+
+            --local rowz = {2032, 3251, 2033, 931, 80, 36}
+            local rowz = {1,2,5, 2032, 3251, 2033}
+            for jj = 1, #rowz do
+                local pp = chosenmod.weight[rowz[jj]]
+                local gg = chosenmod.gradWeight[rowz[jj]]
+
+                for kk = 1, pp:size(1) do
+
+                    local orig = pp[kk]
+                    pp[kk] = pp[kk] + eps
+                    --model.decoder:resetLastStates()
+                    --local rloss = model.decoder:computeLoss(batch, aggEncStates, catCtx, criterion)
+                    local rloss = getloss()
+                    pp[kk] = pp[kk] - 2*eps
+                    --model.decoder:resetLastStates()
+                    --local lloss = model.decoder:computeLoss(batch, aggEncStates, catCtx, criterion)
+                    local lloss = getloss()
+                    local fd = (rloss-lloss)/(2*eps)
+                    print(gg[kk], fd)
+                    pp[kk] = orig
+                end
+                print("")
+            end
+
+            -- for ii, mod in ipairs(model.decoder.generator.modules[1].modules) do
+            --     if mod.weight then
+            --         print("doing", ii, mod)
+            --         --local rowz = {2032, 3251, 4805, 2033, 931, 365, 80, 36, 104}
+            --         local rowz = {2032, 3251, 4805}
+            --         for jj = 1, #rowz do
+            --             local nugz = mod.weight[rowz[jj]]
+            --             local gnugz = mod.gradWeight[rowz[jj]]
+            --             for kk = 1, nugz:size(1) do
+            --                 local orig = nugz[kk]
+            --                 nugz[kk] = nugz[kk] + eps
+            --                 --local rloss = getloss()
+            --                 local rloss = model.decoder:computeLoss(batch, aggEncStates, catCtx, criterion)
+            --                 nugz[kk] = nugz[kk] - 2*eps
+            --                 --local lloss = getloss()
+            --                 local lloss = model.decoder:computeLoss(batch, aggEncStates, catCtx, criterion)
+            --                 local fd = (rloss - lloss)/(2*eps)
+            --                 --print("oh", gradParams[1]:norm())
+            --                 --print(rloss, lloss)
+            --                 print(gnugz[kk], fd)
+            --                 nugz[kk] = orig
+            --             end
+            --             print("")
+            --         end
+            --         assert(false)
+            --     end
+            -- end
+
+            assert(false)
 
                 -- Update the parameters.
-                optim:prepareGrad(gradParams, opt.max_grad_norm)
-                optim:updateParams(params, gradParams)
-                epochState:update(batch, loss)
-                batch:nextPiece()
-            end
+            --    optim:prepareGrad(gradParams, opt.max_grad_norm)
+            --    optim:updateParams(params, gradParams)
+            --    epochState:update(batch, loss)
+            --    batch:nextPiece()
+            --end
 
             if iter % opt.report_every == 0 then
                 epochState:log(iter, opt.json_log)

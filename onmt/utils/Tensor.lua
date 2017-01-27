@@ -139,7 +139,7 @@ local function copyTensorTable(proto, src)
   return tab
 end
 
-local function copyTensorTableHalf(proto, src)
+local function copyTensorTableHalfRul(proto, src)
     local tab = {}
     assert(#proto == #src)
     for i = 1, #proto do
@@ -156,6 +156,26 @@ local function copyTensorTableHalf(proto, src)
     end
     return tab
 end
+
+local function copyTensorTableHalf(proto, src)
+    local tab = {}
+    assert(#proto == #src)
+    for i = 1, #proto do
+        proto[i]:resize(src[i]:size(1), proto[i]:size(2)):zero() -- unnecessary
+        if src[i]:size(2) < proto[i]:size(2) then
+            assert(proto[i]:size(2) == src[i]:size(2)*2)
+            proto[i]:narrow(2,1,src[i]:size(2)):copy(src[i])
+            proto[i]:narrow(2,src[i]:size(2)+1,src[i]:size(2)):copy(src[i])
+        elseif src[i]:size(2) == proto[i]:size(2) then
+            proto[i]:copy(src[i])
+        else
+            assert(false)
+        end
+        table.insert(tab, proto[i])
+    end
+    return tab
+end
+
 
 return {
   recursiveClone = recursiveClone,

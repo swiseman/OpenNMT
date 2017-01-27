@@ -33,6 +33,7 @@ function CIndexAddTo:updateOutput(input) -- expects input to be 3 things
         newidxs = newidxs:long()
     end
     newidxs:add(idxs)
+    --newidxs = newidxs:long()
     self.newidxs = newidxs
 
     if self.inplace then
