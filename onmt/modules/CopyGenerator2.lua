@@ -17,14 +17,11 @@ end
 function CopyGenerator2:_buildGenerator(rnnSize, outputSize, tanhQuery, doubleOutput)
     local tstate = nn.Identity()() -- attnlayer (numEffectiveLayers+1)
     local context = nn.Identity()()
-    local pstate
-    if doubleOutput then
-        pstate = nn.Identity()()
-    end
+    local pstate = nn.Identity()
     local srcIdxs = nn.Identity()()
 
     -- get unnormalized attn scores
-    local qstate = doubleOutput and nn.Narrow(2, rnnSize+1, rnnSize)(pstate) or tstate
+    local qstate = doubleOutput and nn.Narrow(2, rnnSize+1, rnnSize)(pstate) or pstate
     local targetT = nn.Linear(rnnSize, rnnSize)(qstate)
     if tanhQuery then
         targetT = nn.Tanh()(targetT)
@@ -38,12 +35,7 @@ function CopyGenerator2:_buildGenerator(rnnSize, outputSize, tanhQuery, doubleOu
     local rulDist = nn.Narrow(2,1,outputSize)(catDist)
     local ptrDist = nn.Narrow(2,outputSize+1,-1)(catDist)
     local logmarginals = nn.Log()(nn.CIndexAddTo()({rulDist, ptrDist, srcIdxs}))
-    local inputs
-    if doubleOutput then
-        inputs = {tstate, context, pstate, srcIdxs}
-    else
-        inputs = {tstate, context, srcIdxs}
-    end
+    local inputs = {tstate, context, pstate, srcIdxs}
     return nn.gModule(inputs, {logmarginals})
 end
 

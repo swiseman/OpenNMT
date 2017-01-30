@@ -98,6 +98,13 @@ cmd:option('-json_log', false, [[Outputs logs in JSON format.]])
 local opt = cmd:parse(arg)
 print(opt)
 
+local function reseed()
+  torch.manualSeed(opt.seed)
+  if opt.gpuid > 0 then
+    cutorch.manualSeed(opt.seed)
+  end
+end
+
 local function initParams(model, verbose)
     local numParams = 0
     local params = {}
@@ -126,7 +133,7 @@ local function initParams(model, verbose)
                     m:postParametersInitialization()
                 end
             end)
-        end        
+        end
     else
         print("copying loaded params...")
         local checkpoint = torch.load(opt.train_from)
@@ -317,6 +324,7 @@ local function trainModel(model, trainData, validData, dataset, info)
         return epochState
     end -- end local function trainEpoch
 
+    reseed()
     local validPpl = 0
     local bestPpl = math.huge
     local bestEpoch = -1
@@ -375,6 +383,8 @@ local function main()
   onmt.utils.Opt.init(opt, requiredOptions)
   onmt.utils.Cuda.init(opt)
   onmt.utils.Parallel.init(opt)
+
+  reseed()
 
   -- Create the data loader class.
   if not opt.json_log then

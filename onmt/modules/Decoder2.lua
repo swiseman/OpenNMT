@@ -397,12 +397,7 @@ function Decoder2:backward(batch, outputs, criterion, ctxLen)
     -- Compute decoder output gradients.
     -- Note: This would typically be in the forward pass.
     --local pred = self.generator:forward(outputs[t])
-    local genInp
-    if self.args.doubleOutput then
-        genInp = {outputs[t], context, self:net(t).output[self.args.numEffectiveLayers], batch:getSourceWords()}
-    else
-        genInp = {outputs[t], context, batch:getSourceWords()}
-    end
+    local genInp = {outputs[t], context, self:net(t).output[self.args.numEffectiveLayers], batch:getSourceWords()}
     local pred = self.generator:forward(genInp)
     local output = batch:getTargetOutput(t)
 
@@ -419,9 +414,9 @@ function Decoder2:backward(batch, outputs, criterion, ctxLen)
     --gradStatesInput[#gradStatesInput]:add(decGradOut)
     gradStatesInput[#gradStatesInput]:add(decGradOut[1])
     gradContextInput:add(decGradOut[2])
-    if self.args.doubleOutput then
-        gradStatesInput[self.args.numEffectiveLayers]:add(decGradOut[3])
-    end
+    --if self.args.doubleOutput then
+    gradStatesInput[self.args.numEffectiveLayers]:add(decGradOut[3])
+    --end
 
     -- Compute the standard backward.
     local gradInput = self:net(t):backward(self.inputs[t], gradStatesInput)
@@ -452,7 +447,7 @@ function Decoder2:backward(batch, outputs, criterion, ctxLen)
       gradStatesInput[finalLayer-1]:narrow(2,1,rnnSize):add(gradStatesInput[finalLayer-1]:narrow(2,rnnSize+1,rnnSize))
       gradStatesInput[finalLayer-1] = gradStatesInput[finalLayer-1]:narrow(2,1,rnnSize)
   end
-  
+
 
   if batch.targetOffset > 0 then -- this is a hack, but the pt is that only used encoder's last state on first piece
       for i = 1, #self.statesProto do
@@ -481,12 +476,7 @@ function Decoder2:computeLoss(batch, encoderStates, context, criterion)
   local loss = 0
   self:forwardAndApply(batch, encoderStates, context, function (out, t, finalState)
     --print(torch.abs(out):sum())
-    local genInp
-    if self.args.doubleOutput then
-        genInp = {out, context, finalState, batch:getSourceWords()}
-    else
-        genInp = {out, context, batch:getSourceWords()}
-    end
+    local genInp = {out, context, finalState, batch:getSourceWords()}
     local pred = self.generator:forward(genInp)
     local output = batch:getTargetOutput(t)
     loss = loss + criterion:forward(pred, output)
@@ -518,12 +508,7 @@ function Decoder2:computeScore(batch, encoderStates, context)
 
   self:forwardAndApply(batch, encoderStates, context, function (out, t, finalState)
     --local genInp = {out, context, batch:getSourceWords()}
-    local genInp
-    if self.args.doubleOutput then
-        genInp = {out, context, finalState, batch:getSourceWords()}
-    else
-        genInp = {out, context, batch:getSourceWords()}
-    end
+    local genInp = {out, context, finalState, batch:getSourceWords()}
     local pred = self.generator:forward(genInp)
     for b = 1, batch.size do
       if t <= batch.targetSize[b] then
@@ -566,12 +551,7 @@ function Decoder2:greedyFixedFwd(batch, encoderStates, context, probBuf)
     for t = 1, batch.targetLength do
       prevOut, states = self:forwardOne(self.greedy_inp[t], states, context, prevOut, t)
       --local genInp = {prevOut, context, batch:getSourceWords()}
-      local genInp
-      if self.args.doubleOutput then
-          genInp = {prevOut, context, states[#states], batch:getSourceWords()}
-      else
-          genInp = {prevOut, context, batch:getSourceWords()}
-      end
+      local genInp = {prevOut, context, states[#states], batch:getSourceWords()}
       local preds = self.generator:forward(genInp)[1]
       -- generators do the marginalization/expertization
     --   -- add attn to source (and not worry about unks)
