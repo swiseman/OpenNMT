@@ -68,7 +68,12 @@ local function greedy_eval(model, data, src_dict, targ_dict,
     local aggEncStates, catCtx = allEncForward(model, batch)
     model.decoder:resetLastStates()
     --probs:resize(batch.targetLength, batch.size)
-    local preds = model.decoder:greedyFixedFwd(batch, aggEncStates, catCtx, probs)
+    local preds, probs
+    if i >= start_print_batch and i <= end_print_batch then
+        preds, probs = model.decoder:greedyFixedFwd2(batch, aggEncStates, catCtx)
+    else
+        preds, probs = model.decoder:greedyFixedFwd(batch, aggEncStates, catCtx, probs)
+    end
     -- if i >= start_print_batch and i <= end_print_batch then
     --     local brows = math.min(50, batch.targetLength)
     --     print(probs:sub(1, brows))
@@ -100,6 +105,9 @@ local function greedy_eval(model, data, src_dict, targ_dict,
             --print( "Left  :", left_string)
             print( "True  :", targ_string)
             print( "Gen   :", gen_targ_string)
+            for kk = 1, batch.targetLength do
+                print(stringx.join(",", probs[n][kk]))
+            end
             print(" ")
         end
     end

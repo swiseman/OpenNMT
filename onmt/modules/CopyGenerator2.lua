@@ -17,7 +17,7 @@ end
 function CopyGenerator2:_buildGenerator(rnnSize, outputSize, tanhQuery, doubleOutput)
     local tstate = nn.Identity()() -- attnlayer (numEffectiveLayers+1)
     local context = nn.Identity()()
-    local pstate = nn.Identity()
+    local pstate = nn.Identity()()
     local srcIdxs = nn.Identity()()
 
     -- get unnormalized attn scores
