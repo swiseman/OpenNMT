@@ -53,6 +53,21 @@ local function convert_tostring(ts, size, dict)
    return stringx.join(' ', strtbl)
 end
 
+
+local function convert_predtostring(ts, size, dict, probs, n)
+   --assert(ts:dim() == 1)
+   local strtbl = {}
+   for i = 1, size do
+       table.insert(strtbl, dict.idxToLabel[ts[i]])
+       if i > 1 then
+           table.insert("[")
+           table.insert(stringx.join(",", probs[ii-1][n]))
+           table.insert("]")
+       end
+   end
+   return stringx.join(' ', strtbl)
+end
+
 local function greedy_eval(model, data, src_dict, targ_dict,
     start_print_batch, end_print_batch)
 
@@ -99,15 +114,15 @@ local function greedy_eval(model, data, src_dict, targ_dict,
             -- local left_string = convert_tostring(batch.source_input:select(2, n),
             --     batch.source_length, src_dict)
             local targ_string = convert_tostring(batch.targetInput:select(2, n),
-                batch.targetLength, targ_dict)
-            local gen_targ_string = convert_tostring(preds:select(2, n),
-                batch.targetLength+1, targ_dict)
+                batch.targetLength, targ_dict)                
+            local gen_targ_string = convert_predtostring(preds:select(2, n),
+                batch.targetLength+1, targ_dict, probs, n)
             --print( "Left  :", left_string)
             print( "True  :", targ_string)
             print( "Gen   :", gen_targ_string)
-            for kk = 1, batch.targetLength do
-                print(stringx.join(",", probs[n][kk]))
-            end
+            -- for kk = 1, batch.targetLength do
+            --     print(stringx.join(",", probs[kk][n]))
+            -- end
             print(" ")
         end
     end
