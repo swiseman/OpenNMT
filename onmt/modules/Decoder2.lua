@@ -622,3 +622,35 @@ function Decoder2:greedyFixedFwd2(batch, encoderStates, context)
     end
     return self.greedy_inp, stuff
 end
+
+
+-- assumes seqs starts w/ start_token
+function Decoder2:scoreSequences(batch, encoderStates, context, seqs)
+    local laySizes = getProtoSizes(batch.size, self.args.rnnSize,
+      self.args.numEffectiveLayers, self.args.doubleOutput)
+
+    if self.statesProto == nil then
+      self.statesProto = onmt.utils.Tensor.initTensorTable(self.args.numEffectiveLayers,
+                                                           self.stateProto,
+                                                           laySizes)
+    end
+
+    local scores = torch.Tensor():resize(seqs:size(1)-1, seqs:size(2))
+
+    local states, prevOut
+    if self.args.doubleOutput then
+        states = onmt.utils.Tensor.copyTensorTableHalf(self.statesProto, encoderStates)
+    else
+        states = onmt.utils.Tensor.copyTensorTable(self.statesProto, encoderStates)
+    end
+
+    for t = 1, seqs:size(1)-1 do
+      prevOut, states = self:forwardOne(seqs[t], states, context, prevOut, t)
+      local genInp = {prevOut, context, states[#states], batch:getSourceWords()}
+      local preds = self.generator:forward(genInp)[1]
+      for n = 1, batch.size do
+          scores[t][n] = preds[n][seqs[t+1][n]]
+      end
+    end
+    return scores
+end

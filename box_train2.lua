@@ -341,6 +341,46 @@ local function trainModel(model, trainData, validData, dataset, info)
         end
         onmt.train.Greedy.greedy_eval(model, validData, nil, g_tgtDict, 1, 10, opt.verbose_eval)
         return
+    elseif opt.scoresomethings then
+        validPpl = eval(model, criterion, validData)
+        print('Validation perplexity: ' .. validPpl)
+        local batchidxs = {
+            {1, 2, {{3, "Milwaukee"},
+                    {4, "Bucks"}}
+            }
+        }
+        local g_scores = {}
+        for j = 1, #batchidxs do
+            local batchIdx, b = batchidxs[j][1], batchidxs[j][2]
+            local batch = onmt.utils.Cuda.convert(validData:getBatch(batchIdx))
+            local aggEncStates, catCtx = allEncForward(model, batch)
+            model.decoder:resetLastStates()
+            -- N.B. preds as obtained below should have start token as first thing...
+            local preds = model.decoder:greedyFixedFwd(batch, aggEncStates, catCtx)
+            -- copy source/targ into first position
+            if b ~= 1 then
+                batch.sourceInput:sub(1, batch.totalSourceLength)
+                  :copy(batch.sourceInput:sub((b-1)*batch.totalSourceLength+1, b*batch.totalSourceLength))
+                preds:select(2, 1):copy(preds:select(2, b))
+            end
+            if b ~= 2 then -- duplicate
+                batch.sourceInput:sub(batch.totalSourceLength+1, 2*batch.totalSourceLength)
+                  :copy(batch.sourceInput:sub(1, batch.totalSourceLength))
+                preds:select(2, 2):copy(preds:select(2, 1))
+            end
+            batch.size = 2
+            batch.sourceInput = batch.sourceInput:sub(1, 2*batch.totalSourceLength)
+            local seqs = preds:narrow(2,1,2)
+            local changes = batchidxs[j][3]
+            for c = 1, #changes do
+                local cidx, cword = changes[c][1], changes[c][2]
+                seqs:select(2, 2)[cidx] = g_tgtDict.labelToIdx[cword]
+            end
+            local aggEncStates, catCtx = allEncForward(model, batch)
+            model.decoder:resetLastStates()
+            table.insert(g_scores, model.decoder:scoreSequences(batch, aggEncStates, catCtx, seqs))
+        end
+        return
     end
 
     for epoch = opt.start_epoch, opt.epochs do
