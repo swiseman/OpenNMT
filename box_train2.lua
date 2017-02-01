@@ -20,6 +20,7 @@ cmd:option('-save_model', '', [[Model filename (the model will be saved as
 cmd:option('-train_from', '', [[If training from a checkpoint then this is the path to the pretrained model.]])
 cmd:option('-continue', false, [[If training from a checkpoint, whether to continue the training in the same configuration or not.]])
 cmd:option('-just_eval', false, [[]])
+cmd:option('-verbose_eval', false, [[]])
 
 cmd:text("")
 cmd:text("**Model options**")
@@ -338,7 +339,7 @@ local function trainModel(model, trainData, validData, dataset, info)
         if not opt.json_log then
             print('Validation perplexity: ' .. validPpl)
         end
-        onmt.train.Greedy.greedy_eval(model, validData, nil, g_tgtDict, 1, 10)
+        onmt.train.Greedy.greedy_eval(model, validData, nil, g_tgtDict, 1, 10, opt.verbose_eval)
         return
     end
 

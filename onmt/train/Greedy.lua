@@ -59,17 +59,17 @@ local function convert_predtostring(ts, size, dict, probs, n)
    local strtbl = {}
    for i = 1, size do
        table.insert(strtbl, dict.idxToLabel[ts[i]])
-       if i > 1 then
-           table.insert("[")
-           table.insert(stringx.join(",", probs[ii-1][n]))
-           table.insert("]")
+       if probs and i > 1 then
+           table.insert(strtbl, "[")
+           table.insert(strtbl, stringx.join(",", probs[i-1][n]))
+           table.insert(strtbl, "]")
        end
    end
    return stringx.join(' ', strtbl)
 end
 
 local function greedy_eval(model, data, src_dict, targ_dict,
-    start_print_batch, end_print_batch)
+    start_print_batch, end_print_batch, verbose)
 
   local start_print_batch = start_print_batch or 0
   local ngram_crct = torch.zeros(4)
@@ -84,7 +84,7 @@ local function greedy_eval(model, data, src_dict, targ_dict,
     model.decoder:resetLastStates()
     --probs:resize(batch.targetLength, batch.size)
     local preds, probs
-    if i >= start_print_batch and i <= end_print_batch then
+    if verbose and i >= start_print_batch and i <= end_print_batch then
         preds, probs = model.decoder:greedyFixedFwd2(batch, aggEncStates, catCtx)
     else
         preds, probs = model.decoder:greedyFixedFwd(batch, aggEncStates, catCtx, probs)
@@ -114,7 +114,7 @@ local function greedy_eval(model, data, src_dict, targ_dict,
             -- local left_string = convert_tostring(batch.source_input:select(2, n),
             --     batch.source_length, src_dict)
             local targ_string = convert_tostring(batch.targetInput:select(2, n),
-                batch.targetLength, targ_dict)                
+                batch.targetLength, targ_dict)
             local gen_targ_string = convert_predtostring(preds:select(2, n),
                 batch.targetLength+1, targ_dict, probs, n)
             --print( "Left  :", left_string)
