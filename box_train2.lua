@@ -344,12 +344,20 @@ local function trainModel(model, trainData, validData, dataset, info)
     elseif opt.scoresomethings then
         validPpl = eval(model, criterion, validData)
         print('Validation perplexity: ' .. validPpl)
+        allEvaluate(model)
         local batchidxs = {
-            {1, 2, {{3, "Milwaukee"},
-                    {4, "Bucks"}}
-            }
+            {1, 2, {{64, "Bucks"},
+                    }
+            },
+--            {1, 2, {{57, "Bucks"},
+--                    }
+--            },
+--            {1, 2, {{3, "Milwaukee"},
+--                    {4, "Bucks"}}
+--            }
         }
-        local g_scores = {}
+        g_scores = {}
+        g_seqs = {}
         for j = 1, #batchidxs do
             local batchIdx, b = batchidxs[j][1], batchidxs[j][2]
             local batch = onmt.utils.Cuda.convert(validData:getBatch(batchIdx))
@@ -379,6 +387,7 @@ local function trainModel(model, trainData, validData, dataset, info)
             local aggEncStates, catCtx = allEncForward(model, batch)
             model.decoder:resetLastStates()
             table.insert(g_scores, model.decoder:scoreSequences(batch, aggEncStates, catCtx, seqs))
+            table.insert(g_seqs, seqs)
         end
         return
     end

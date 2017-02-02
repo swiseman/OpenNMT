@@ -635,7 +635,7 @@ function Decoder2:scoreSequences(batch, encoderStates, context, seqs)
                                                            laySizes)
     end
 
-    local scores = torch.Tensor():resize(seqs:size(1)-1, seqs:size(2))
+    local scores = torch.Tensor():resize(seqs:size(1)-1, seqs:size(2), 3):zero()
 
     local states, prevOut
     if self.args.doubleOutput then
@@ -644,12 +644,28 @@ function Decoder2:scoreSequences(batch, encoderStates, context, seqs)
         states = onmt.utils.Tensor.copyTensorTable(self.statesProto, encoderStates)
     end
 
+    local smlayer
+    self.generator.modules[1]:apply(function(mod)
+        if torch.type(mod) == 'nn.SoftMax' then
+            smlayer = mod
+        end
+    end)
+    assert(smlayer)
+
     for t = 1, seqs:size(1)-1 do
       prevOut, states = self:forwardOne(seqs[t], states, context, prevOut, t)
       local genInp = {prevOut, context, states[#states], batch:getSourceWords()}
       local preds = self.generator:forward(genInp)[1]
       for n = 1, batch.size do
-          scores[t][n] = preds[n][seqs[t+1][n]]
+          local next_word = seqs[t+1][n]
+          scores[t][n][1] = preds[n][next_word]
+          scores[t][n][2] = smlayer.output[n][next_word]
+          -- for now i'll add the pointer probs...
+          for j = 1, genInp[4]:size(2) do
+              if genInp[4][n][j] == next_word then
+                  scores[t][n][3] = scores[t][n][3] + smlayer.output[n][self.generator.outputSize+j]
+              end
+          end
       end
     end
     return scores
