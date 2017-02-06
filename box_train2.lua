@@ -342,8 +342,8 @@ local function trainModel(model, trainData, validData, dataset, info)
         onmt.train.Greedy.greedy_eval(model, validData, nil, g_tgtDict, 1, 10, opt.verbose_eval)
         return
     elseif opt.scoresomethings then
-        validPpl = eval(model, criterion, validData)
-        print('Validation perplexity: ' .. validPpl)
+        --validPpl = eval(model, criterion, validData)
+        --print('Validation perplexity: ' .. validPpl)
         allEvaluate(model)
         local batchidxs = {
             {1, 2, {{64, "Bucks"},
@@ -387,7 +387,7 @@ local function trainModel(model, trainData, validData, dataset, info)
             local aggEncStates, catCtx = allEncForward(model, batch)
             model.decoder:resetLastStates()
             table.insert(g_scores, model.decoder:scoreSequences(batch, aggEncStates, catCtx, seqs))
-            table.insert(g_seqs, seqs)
+            table.insert(g_seqs, seqs:clone())
         end
         return
     end

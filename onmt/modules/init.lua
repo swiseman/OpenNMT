@@ -26,5 +26,6 @@ require('onmt.modules.MarginalNLLCriterion')
 require('onmt.modules.CopyPOEGenerator')
 require('onmt.modules.CopyPOEGenerator')
 require('onmt.modules.CIndexAddTo')
+require('onmt.modules.MaxMask')
 
 return onmt
