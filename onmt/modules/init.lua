@@ -27,5 +27,6 @@ require('onmt.modules.CopyPOEGenerator')
 require('onmt.modules.CopyPOEGenerator')
 require('onmt.modules.CIndexAddTo')
 require('onmt.modules.MaxMask')
+require('onmt.modules.StupidMaxThing')
 
 return onmt
