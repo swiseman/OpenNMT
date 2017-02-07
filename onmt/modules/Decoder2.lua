@@ -592,6 +592,13 @@ function Decoder2:greedyFixedFwd2(batch, encoderStates, context)
         states = onmt.utils.Tensor.copyTensorTable(self.statesProto, encoderStates)
     end
 
+    local smlayer
+    self.generator.modules[1]:apply(function(mod)
+        if torch.type(mod) == 'nn.SoftMax' then
+            smlayer = mod
+        end
+    end)
+
     self.greedy_inp[1]:copy(batch:getTargetInput(1)) -- should be start token
     for t = 1, batch.targetLength do
       stuff[t] = {}
@@ -599,12 +606,7 @@ function Decoder2:greedyFixedFwd2(batch, encoderStates, context)
       --local genInp = {prevOut, context, batch:getSourceWords()}
       local genInp = {prevOut, context, states[#states], batch:getSourceWords()}
       local preds = self.generator:forward(genInp)[1]
-      local smlayer
-      self.generator.modules[1]:apply(function(mod)
-          if torch.type(mod) == 'nn.SoftMax' then
-              smlayer = mod
-          end
-      end)
+
 
       torch.max(self.maxes, self.argmaxes, preds, 2)
       for n = 1, batch.size do
@@ -623,6 +625,65 @@ function Decoder2:greedyFixedFwd2(batch, encoderStates, context)
     return self.greedy_inp, stuff
 end
 
+function Decoder2:greedyFixedFwd3(batch, encoderStates, context)
+    if not self.greedy_inp then
+        self.greedy_inp = torch.CudaTensor()
+        self.maxes = torch.CudaTensor()
+        self.argmaxes = torch.CudaLongTensor()
+    end
+    local PAD, EOS = onmt.Constants.PAD, onmt.Constants.EOS
+    self.greedy_inp:resize(batch.targetLength+1, batch.size):fill(PAD)
+    self.maxes:resize(batch.size, 1)
+    self.argmaxes:resize(batch.size, 1)
+
+    local laySizes = getProtoSizes(batch.size, self.args.rnnSize,
+      self.args.numEffectiveLayers, self.args.doubleOutput)
+
+    if self.statesProto == nil then
+      self.statesProto = onmt.utils.Tensor.initTensorTable(self.args.numEffectiveLayers,
+                                                           self.stateProto,
+                                                           laySizes)
+    end
+
+    local stuff = {}
+
+    local states, prevOut
+    if self.args.doubleOutput then
+        states = onmt.utils.Tensor.copyTensorTableHalf(self.statesProto, encoderStates)
+    else
+        states = onmt.utils.Tensor.copyTensorTable(self.statesProto, encoderStates)
+    end
+
+    local attnlayer
+    self.generator.modules[1]:apply(function(mod)
+        if torch.type(mod) == 'nn.Sum' then
+            attnlayer = mod
+        end
+    end)
+
+    self.greedy_inp[1]:copy(batch:getTargetInput(1)) -- should be start token
+    for t = 1, batch.targetLength do
+      stuff[t] = {}
+      prevOut, states = self:forwardOne(self.greedy_inp[t], states, context, prevOut, t)
+      --local genInp = {prevOut, context, batch:getSourceWords()}
+      local genInp = {prevOut, context, states[#states], batch:getSourceWords()}
+      local preds = self.generator:forward(genInp)[1]
+
+      torch.max(self.maxes, self.argmaxes, preds, 2)
+      local sortedAttn, sortedIdxs = torch.sort(attnlayer.output:float(), 2, true)
+      for n = 1, batch.size do
+          stuff[t][n] = {}
+          for k = 1, 5 do
+              -- fmt is word,idx,score
+              local idx = sortedIdxs[n][k]
+              table.insert(stuff[t][n], {genInp[4][n][idx], idx, sortedAttn[n][k]})
+          end
+      end
+
+      self.greedy_inp[t+1]:copy(self.argmaxes:view(-1))
+    end
+    return self.greedy_inp, stuff
+end
 
 -- assumes seqs starts w/ start_token
 function Decoder2:scoreSequences(batch, encoderStates, context, seqs)
