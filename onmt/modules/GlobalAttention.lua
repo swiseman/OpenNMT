@@ -28,11 +28,11 @@ local GlobalAttention, parent = torch.class('onmt.GlobalAttention', 'onmt.Networ
 
   * `dim` - dimension of the context vectors.
 --]]
-function GlobalAttention:__init(dim)
-  parent.__init(self, self:_buildModel(dim))
+function GlobalAttention:__init(dim, justConcat)
+  parent.__init(self, self:_buildModel(dim, justConcat))
 end
 
-function GlobalAttention:_buildModel(dim)
+function GlobalAttention:_buildModel(dim, justConcat)
   local inputs = {}
   table.insert(inputs, nn.Identity()())
   table.insert(inputs, nn.Identity()())
@@ -52,7 +52,7 @@ function GlobalAttention:_buildModel(dim)
   local contextCombined = nn.MM()({attn, context}) -- batchL x 1 x dim
   contextCombined = nn.Sum(2)(contextCombined) -- batchL x dim
   contextCombined = nn.JoinTable(2)({contextCombined, inputs[1]}) -- batchL x dim*2
-  local contextOutput = nn.Tanh()(nn.Linear(dim*2, dim, false)(contextCombined))
+  local contextOutput = justConcat and contextCombined or nn.Tanh()(nn.Linear(dim*2, dim, false)(contextCombined))
 
   return nn.gModule(inputs, {contextOutput})
 end
