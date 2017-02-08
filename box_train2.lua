@@ -21,6 +21,7 @@ cmd:option('-train_from', '', [[If training from a checkpoint then this is the p
 cmd:option('-continue', false, [[If training from a checkpoint, whether to continue the training in the same configuration or not.]])
 cmd:option('-just_eval', false, [[]])
 cmd:option('-verbose_eval', false, [[]])
+cmd:option('-scoresomethings', false, [[]])
 
 cmd:text("")
 cmd:text("**Model options**")

@@ -69,7 +69,7 @@ local function convert_predtostring(ts, size, dict, probs, n)
        if probs and i > 1 then
            table.insert(strtbl, "[")
            --table.insert(strtbl, stringx.join(",", probs[i-1][n]))
-           table.insert(nestedstringshit(probs[i-1][n]))
+           table.insert(strbl, nestedstringshit(probs[i-1][n]))
            table.insert(strtbl, "]")
        end
    end
