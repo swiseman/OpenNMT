@@ -51,6 +51,7 @@ function BoxTableEncoder:_buildModel()
             nn.View(-1, args.nFeatures*args.wordVecSize)(
              lut(x)))
     else
+        assert(args.wordVecSize == args.encDim)
         -- adds embeddings of all features and applies bias and nonlinearity
         -- (i.e., embeds sparse features)
         featEmbs = nn.Add(args.wordVecSize)(

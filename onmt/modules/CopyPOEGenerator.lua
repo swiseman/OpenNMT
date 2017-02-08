@@ -18,14 +18,11 @@ end
 function CopyPOEGenerator:_buildGenerator(rnnSize, outputSize, tanhQuery, doubleOutput)
     local tstate = nn.Identity()() -- attnlayer (numEffectiveLayers+1)
     local context = nn.Identity()()
-    local pstate
-    if doubleOutput then
-        pstate = nn.Identity()()
-    end
+    local pstate = nn.Identity()()
     local srcIdxs = nn.Identity()()
 
     -- get unnormalized attn scores
-    local qstate = doubleOutput and nn.Narrow(2, rnnSize+1, rnnSize)(pstate) or tstate
+    local qstate = doubleOutput and nn.Narrow(2, rnnSize+1, rnnSize)(pstate) or pstate
     local targetT = nn.Linear(rnnSize, rnnSize)(qstate)
     if tanhQuery then
         targetT = nn.Tanh()(targetT)
@@ -33,16 +30,11 @@ function CopyPOEGenerator:_buildGenerator(rnnSize, outputSize, tanhQuery, double
     local attn = nn.MM()({context, nn.Replicate(1,3)(targetT)}) -- batchL x sourceL x 1
     attn = nn.Sum(3)(attn) -- batchL x sourceL
 
-    -- concatenate with regular output shit
+    -- add scores to regular output shit
     local regularOutput = nn.Linear(rnnSize, outputSize)(tstate)
     local addedOutput = nn.CIndexAddTo()({regularOutput, attn, srcIdxs})
     local scores = nn.LogSoftMax()(addedOutput)
-    local inputs
-    if doubleOutput then
-        inputs = {tstate, context, pstate, srcIdxs}
-    else
-        inputs = {tstate, context, srcIdxs}
-    end
+    local inputs = {tstate, context, pstate, srcIdxs}
     return nn.gModule(inputs, {scores})
 
 end
