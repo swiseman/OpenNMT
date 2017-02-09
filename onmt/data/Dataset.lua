@@ -4,10 +4,11 @@ local Dataset = torch.class("Dataset")
 --[[ Initialize a data object given aligned tables of IntTensors `srcData`
   and `tgtData`.
 --]]
-function Dataset:__init(srcData, tgtData)
+function Dataset:__init(srcData, tgtData, en)
 
   self.src = srcData.words
   self.srcFeatures = srcData.features
+  self.en = en
 
   if tgtData ~= nil then
     self.tgt = tgtData.words
@@ -107,8 +108,11 @@ function Dataset:getBatch(idx)
       end
     end
   end
-
-  return onmt.data.Batch.new(src, srcFeatures, tgt, tgtFeatures)
+  if self.en then
+      return onmt.data.EnBatch.new(src, srcFeatures, tgt, tgtFeatures)
+  else
+      return onmt.data.Batch.new(src, srcFeatures, tgt, tgtFeatures)
+  end
 end
 
 return Dataset

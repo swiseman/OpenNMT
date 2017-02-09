@@ -79,8 +79,8 @@ Parameters:
 Returns: The raw network clone at timestep t.
   When `evaluate()` has been called, cheat and return t=1.
 ]]
-function Sequencer:net(t)
-  if self.train then
+function Sequencer:net(t, force)
+  if force or self.train then
     -- In train mode, the network has to be cloned to remember intermediate
     -- outputs for each timestep and to allow backpropagation through time.
     if self.networkClones[t] == nil then

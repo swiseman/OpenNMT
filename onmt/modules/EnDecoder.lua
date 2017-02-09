@@ -26,9 +26,10 @@ Parameters:
   * `generator` - optional, an output [onmt.Generator](onmt+modules+Generator).
   * `inputFeed` - bool, enable input feeding.
 --]]
-function EnDecoder:__init(inputNetwork, rnn, generator, inputFeed)
+function EnDecoder:__init(inputNetwork, rnn, inputFeed)
   self.rnn = rnn
   self.inputNet = inputNetwork
+  self.maxBack = 2
 
   self.args = {}
   self.args.rnnSize = self.rnn.outputSize
@@ -190,7 +191,7 @@ function EnDecoder:_buildModel()
   end
   table.insert(outputs, attnOutput)
 
-  self.goldScorer = self:_buildScorer()
+  local scorer = self:_buildScorer()
   table.insert(outputs, scorer({attnOutput, meanCtx, maxCtx}))
 
   return nn.gModule(inputs, outputs)
@@ -277,7 +278,7 @@ function EnDecoder:forwardOne(input, prevStates, context, meanOverStates, maxOve
     self.inputs[t] = inputs
   end
 
-  local outputs = self:net(t):forward(inputs)
+  local outputs = self:net(t, true):forward(inputs)
 
   -- Make sure decoder always returns table.
   if type(outputs) ~= "table" then outputs = { outputs } end
@@ -342,7 +343,7 @@ function EnDecoder:forward(batch, encoderStates, context)
     self.inputs = {}
   end
 
-  local outputs = {}
+  --local outputs = {}
   local scoreCumSum = self.scoreSumProto
   scoreCumSum:resize(batch.targetLength, batch.size)
 
@@ -352,7 +353,7 @@ function EnDecoder:forward(batch, encoderStates, context)
 
   self:forwardAndApply(batch, encoderStates, context, meanOverStates, maxOverStates,
     function (out, t, scores)
-        table.insert(outputs, out)
+        --table.insert(outputs, out)
         if t > 1 then
             scoreCumSum[t]:add(scoreCumSum[t-1], scores:view(-1))
         else
@@ -360,7 +361,7 @@ function EnDecoder:forward(batch, encoderStates, context)
         end
     end)
 
-  return outputs, scoreCumSum
+  return scoreCumSum
 end
 
 function EnDecoder:getNegativeSamples(t, stepsBack, batch, context)
@@ -370,7 +371,7 @@ function EnDecoder:getNegativeSamples(t, stepsBack, batch, context)
     end
 
     -- get previous shit
-    local outputs = self:net(t-1).output
+    local outputs = self:net(t-1, true).output
     local numOutputs = #outputs
     local out = outputs[numOutputs-1]
 
@@ -379,7 +380,7 @@ function EnDecoder:getNegativeSamples(t, stepsBack, batch, context)
     sampleInput:resize(stepsBack+1, batch.size)
 
     local prevStates = {}
-    local tempNet = self:net(batch.targetLength+1)
+    local tempNet = self:net(batch.targetLength+1, true)
 
     local meanOverStates = self.meanPool.output
     local maxOverStates = self.maxPool.output
@@ -409,7 +410,7 @@ function EnDecoder:getNegativeSamples(t, stepsBack, batch, context)
 
             -- get max
             local currOutputs = tempNet:forward(inputs)
-            torch.max(self.maxes, self.argmaxes, currOutputs:view(-1), 1)
+            torch.max(self.maxes, self.argmaxes, currOutputs[numOutputs]:view(-1), 1)
             local argmax = self.argmaxes[1]
             sampleInput[s][b] = argmax
 
@@ -433,7 +434,7 @@ function EnDecoder:fwdOnSamples(t, stepsBack, batch, context, sampleInputs)
     self.sampleScores:resize(batch.size):zero()
 
     -- get previous shit
-    local outputs = self:net(t-1).output
+    local outputs = self:net(t-1, true).output
     local numOutputs = #outputs
     local prevOut = outputs[numOutputs-1]
 
@@ -468,7 +469,7 @@ Parameters:
   Note: This code runs both the standard backward and criterion forward/backward.
   It returns both the gradInputs and the loss.
   -- ]]
-function EnDecoder:backward(batch, outputs, criterion)
+function EnDecoder:backward(batch, cumSums, criterion)
     local nOutLayers = self.args.numEffectiveLayers + 2
     local laySizes = {}
     for i = 1, nOutLayers-1 do
@@ -487,9 +488,9 @@ function EnDecoder:backward(batch, outputs, criterion)
                                                             self.gradSampleOutputProto,
                                                             laySizes)
 
-        self.meanPoolOutputsProto = torch.Tensor():typeAs(self.gradOutputsProto)
-        self.maxPoolOutputsProto = torch.Tensor():typeAs(self.gradOutputsProto)
-        self.y = torch.Tensor():typeAs(self.gradOutputsProto)
+        self.meanPoolOutputsProto = torch.Tensor():typeAs(self.gradOutputsProto[1])
+        self.maxPoolOutputsProto = torch.Tensor():typeAs(self.gradOutputsProto[1])
+        self.y = torch.Tensor():typeAs(self.gradOutputsProto[1])
     end
 
 
@@ -507,15 +508,14 @@ function EnDecoder:backward(batch, outputs, criterion)
     local loss = 0
     local context = self.inputs[1][self.args.inputIndex.context]
 
-    assert(false) -- just need targetInputs, not Outputs, and they need to be 1-longer so we get energy of EOS token
-    local maxBack = 2 -- sample at most 3 contiguous tokens for now
+    local maxBack = self.maxBack -- sample at most 3 contiguous tokens for now
     local t = batch.targetLength
     while t >= 2 do -- first is always SOS
         local stepsBack = torch.random(0, math.min(maxBack, t-2))
         -- get indices of negative samples
-        local sampleInputs = getNegativeSamples(t, stepsBack, batch, context)
+        local sampleInputs = self:getNegativeSamples(t, stepsBack, batch, context)
         -- go fwd to get sampled states (and scores)
-        local sampleScores = fwdOnSamples(sampleInputs)
+        local sampleScores = self:fwdOnSamples(t, stepsBack, batch, context, sampleInputs)
         loss = loss + criterion:forward({cumSums[t], sampleScores}, y)
         local scoreGradOuts = criterion:backward({cumSums[t], sampleScores}, y)
         for j = 1, #scoreGradOuts do
@@ -588,18 +588,41 @@ Parameters:
 
 --]]
 function EnDecoder:computeLoss(batch, encoderStates, context, criterion)
-    assert(false)
   local encoderStates = encoderStates
     or onmt.utils.Tensor.initTensorTable(self.args.numEffectiveLayers,
                                          onmt.utils.Cuda.convert(torch.Tensor()),
                                          { batch.size, self.args.rnnSize })
 
+  local scoreCumSum = self.scoreSumProto
+  scoreCumSum:resize(batch.targetLength, batch.size)
+
+  local meanOverStates = self.meanPool:forward(context)
+  local maxOverStates = self.maxPool:forward(context)
+
   local loss = 0
-  self:forwardAndApply(batch, encoderStates, context, meanOverStates, maxOverStates, function (out, t)
-    local pred = self.generator:forward(out)
-    local output = batch:getTargetOutput(t)
-    loss = loss + criterion:forward(pred, output)
+  self:forwardAndApply(batch, encoderStates, context, meanOverStates, maxOverStates,
+  function (out, t, scores)
+      --table.insert(outputs, out)
+      if t > 1 then
+          scoreCumSum[t]:add(scoreCumSum[t-1], scores:view(-1))
+      else
+          scoreCumSum[t]:copy(scores:view(-1))
+      end
   end)
+
+  local y = self.y:resize(batch.size):fill(1)
+  local maxBack = self.maxBack
+  local t = batch.targetLength
+  while t >= 2 do -- first is always SOS
+      local stepsBack = torch.random(0, math.min(maxBack, t-2))
+      -- get indices of negative samples
+      local sampleInputs = self:getNegativeSamples(t, stepsBack, batch, context)
+      -- go fwd to get sampled states (and scores)
+      local sampleScores = self:fwdOnSamples(t, stepsBack, batch, context, sampleInputs)
+      loss = loss + criterion:forward({scoreCumSum[t], sampleScores}, y)
+      -- move to step preceding sampled sequence
+      t = t - stepsBack - 1
+  end
 
   return loss
 end

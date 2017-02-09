@@ -37,6 +37,7 @@ cmd:option('-input_feed', 1, [[Feed the context vector at each time step as addi
 cmd:option('-residual', false, [[Add residual connections between RNN layers.]])
 cmd:option('-brnn', false, [[Use a bidirectional encoder]])
 cmd:option('-brnn_merge', 'sum', [[Merge action for the bidirectional hidden states: concat or sum]])
+cmd:option('-margin', 1, [[]])
 
 cmd:text("")
 cmd:text("**Optimization options**")
@@ -90,6 +91,7 @@ onmt.utils.Logger.declareOpts(cmd)
 onmt.utils.Profiler.declareOpts(cmd)
 
 local opt = cmd:parse(arg)
+opt.en = true
 
 local function initParams(model, verbose)
     local numParams = 0
@@ -137,26 +139,8 @@ end
 
 
 local function buildCriterion(vocabSize, features)
-  local criterion = nn.ParallelCriterion(false)
-
-  local function addNllCriterion(size)
-    -- Ignores padding value.
-    local w = torch.ones(size)
-    w[onmt.Constants.PAD] = 0
-
-    local nll = nn.ClassNLLCriterion(w)
-
-    -- Let the training code manage loss normalization.
-    nll.sizeAverage = false
-    criterion:add(nll)
-  end
-
-  addNllCriterion(vocabSize)
-
-  for j = 1, #features do
-    addNllCriterion(features[j]:size())
-  end
-
+  local criterion = nn.MarginRankingCriterion(opt.margin)
+  criterion.sizeAverage = false -- should maybe not do this...
   return criterion
 end
 
@@ -195,7 +179,7 @@ local function eval(model, criterion, data)
   model.encoder:training()
   model.decoder:training()
 
-  return math.exp(loss / total)
+  return loss/total --math.exp(loss / total)
 end
 
 local function trainModel(model, trainData, validData, dataset, info)
@@ -239,7 +223,7 @@ local function trainModel(model, trainData, validData, dataset, info)
          epochState = onmt.train.EpochState.new(epoch, numIterations, optim:getLearningRate(), lastValidPpl, info.epochStatus)
          batchOrder = info.batchOrder
       else
-         epochState = onmt.train.EpochState.new(epoch, numIterations, optim:getLearningRate(), lastValidPpl)
+         epochState = onmt.train.EpochState.new(epoch, numIterations, optim:getLearningRate(), lastValidPpl, nil, true)
          -- Shuffle mini batch order.
          batchOrder = torch.randperm(trainData:batchCount())
       end
@@ -257,9 +241,9 @@ local function trainModel(model, trainData, validData, dataset, info)
           --_G.profiler:start("encoder.fwd")
           local encStates, context = model.encoder:forward(batch)
           --_G.profiler:stop("encoder.fwd"):start("decoder.fwd")
-          local decOutputs = model.decoder:forward(batch, encStates, context)
+          local cumSums = model.decoder:forward(batch, encStates, context)
           --_G.profiler:stop("decoder.fwd"):start("decoder.bwd")
-          local encGradStatesOut, gradContext, loss = model.decoder:backward(batch, decOutputs, criterion)
+          local encGradStatesOut, gradContext, loss = model.decoder:backward(batch, cumSums, criterion)
           --_G.profiler:stop("decoder.bwd"):start("encoder.bwd")
           model.encoder:backward(batch, encGradStatesOut, gradContext)
           --_G.profiler:stop("encoder.bwd")
@@ -296,6 +280,7 @@ local function trainModel(model, trainData, validData, dataset, info)
     globalProfiler:start("train")
     local epochState, epochProfile = trainEpoch(epoch, validPpl, opt.profiler)
     globalProfiler:add(epochProfile)
+    epochState:log(epochState.numIterations)
     globalProfiler:stop("train")
 
     globalProfiler:start("valid")
@@ -304,7 +289,7 @@ local function trainModel(model, trainData, validData, dataset, info)
 
     if not opt.json_log then
       if opt.profiler then _G.logger:info('profile: %s', globalProfiler:log()) end
-      _G.logger:info('Validation perplexity: %.2f', validPpl)
+      _G.logger:info('Validation Loss: %.3f', validPpl)
     end
 
     if opt.optim == 'sgd' then
@@ -343,8 +328,8 @@ local function main()
 
   local dataset = torch.load(opt.data, 'binary', false)
 
-  local trainData = onmt.data.Dataset.new(dataset.train.src, dataset.train.tgt)
-  local validData = onmt.data.Dataset.new(dataset.valid.src, dataset.valid.tgt)
+  local trainData = onmt.data.Dataset.new(dataset.train.src, dataset.train.tgt, true)
+  local validData = onmt.data.Dataset.new(dataset.valid.src, dataset.valid.tgt, true)
 
   trainData:setBatchSize(opt.max_batch_size)
   validData:setBatchSize(opt.max_batch_size)
@@ -387,7 +372,7 @@ local function main()
   model.encoder = onmt.Models.buildEncoder(opt, dataset.dicts.src)
   model.decoder = onmt.Models.buildDecoder(opt, dataset.dicts.tgt, verbose)
 
-  for _, mod in pairs(_G.model) do
+  for _, mod in pairs(model) do
     onmt.utils.Cuda.convert(mod)
   end
 

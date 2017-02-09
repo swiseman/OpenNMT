@@ -131,8 +131,11 @@ local function buildDecoder(opt, dicts, verbose)
   end
 
   local rnn = RNN.new(opt.layers, inputSize, opt.rnn_size, opt.dropout, opt.residual)
-
-  return onmt.Decoder.new(inputNetwork, rnn, generator, opt.input_feed == 1)
+  if opt.en then
+      return onmt.EnDecoder.new(inputNetwork, rnn, opt.input_feed == 1)
+  else
+      return onmt.Decoder.new(inputNetwork, rnn, generator, opt.input_feed == 1)
+  end
 end
 
 local function loadEncoder(pretrained, clone)

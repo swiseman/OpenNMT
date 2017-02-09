@@ -4,11 +4,12 @@
 local EpochState = torch.class("EpochState")
 
 --[[ Initialize for epoch `epoch` and training `status` (current loss)]]
-function EpochState:__init(epoch, numIterations, learningRate, lastValidPpl, status)
+function EpochState:__init(epoch, numIterations, learningRate, lastValidPpl, status, en)
   self.epoch = epoch
   self.numIterations = numIterations
   self.learningRate = learningRate
   self.lastValidPpl = lastValidPpl
+  self.en = en
 
   if status ~= nil then
     self.status = status
@@ -72,13 +73,21 @@ function EpochState:log(batchIndex, json)
     stats = stats .. string.format('Iteration %d/%d ; ', batchIndex, self.numIterations)
     stats = stats .. string.format('Learning rate %.4f ; ', self.learningRate)
     stats = stats .. string.format('Source tokens/s %d ; ', self.numWordsSource / timeTaken)
-    stats = stats .. string.format('Perplexity %.2f', self:getTrainPpl())
+    if self.en then
+        stats = stats .. string.format('Loss %.3f', self:getTrainLoss())
+    else
+        stats = stats .. string.format('Perplexity %.2f', self:getTrainPpl())
+    end
     _G.logger:info(stats)
   end
 end
 
 function EpochState:getTrainPpl()
   return math.exp(self.status.trainLoss / self.status.trainNonzeros)
+end
+
+function EpochState:getTrainLoss()
+  return self.status.trainLoss / self.status.trainNonzeros
 end
 
 function EpochState:getTime()
