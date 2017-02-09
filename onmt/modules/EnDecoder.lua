@@ -44,20 +44,26 @@ function EnDecoder:__init(inputNetwork, rnn, generator, inputFeed)
 
   parent.__init(self, self:_buildModel())
 
-  assert(false) -- make sure call shareScorers after cuda'ing and before flattening
+  --assert(false) -- make sure call shareScorers after cuda'ing and before flattening
   --self.goldScorer = self:_buildScorer()
-  self.sampleScorer = self.goldScorer:clone('weight', 'gradWeight', 'bias', 'gradBias')
+  --self.sampleScorer = self.goldScorer:clone('weight', 'gradWeight', 'bias', 'gradBias')
 
   --self:add(self.goldScorer)
-  self:add(self.sampleScorer)
+  --self:add(self.sampleScorer)
+
+  -- will use these on ctx
+  self.meanPool = nn.Mean(2)
+  self.maxPool = nn.Max(2)
+  self:add(self.meanPool)
+  self:add(self.maxPool)
 
   self:resetPreallocation()
 end
 
 
-function EnDecoder:shareScorers()
-    self.sampleScorer:share(self.goldScorer, 'weight', 'gradWeight', 'bias', 'gradBias')
-end
+-- function EnDecoder:shareScorers()
+--     self.sampleScorer:share(self.goldScorer, 'weight', 'gradWeight', 'bias', 'gradBias')
+-- end
 
 --[[ Return a new EnDecoder using the serialized data `pretrained`. ]]
 function EnDecoder.load(pretrained)
@@ -145,6 +151,14 @@ function EnDecoder:_buildModel()
   table.insert(inputs, context)
   self.args.inputIndex.context = #inputs
 
+  local meanCtx = nn.Identity()()
+  table.insert(inputs, meanCtx)
+  self.args.inputIndex.meanCtx = #inputs
+
+  local maxCtx = nn.Identity()()
+  table.insert(inputs, maxCtx)
+  self.args.inputIndex.maxCtx = #inputs
+
   local inputFeed
   if self.args.inputFeed then
     inputFeed = nn.Identity()() -- batchSize x rnnSize
@@ -177,8 +191,7 @@ function EnDecoder:_buildModel()
   table.insert(outputs, attnOutput)
 
   self.goldScorer = self:_buildScorer()
-  table.insert(outputs, scorer(attnOutput))
-
+  table.insert(outputs, scorer({attnOutput, meanCtx, maxCtx}))
 
   return nn.gModule(inputs, outputs)
 end
@@ -234,13 +247,15 @@ Returns:
  1. `out` - Top-layer hidden state.
  2. `states` - All states.
 --]]
-function EnDecoder:forwardOne(input, prevStates, context, prevOut, t)
+function EnDecoder:forwardOne(input, prevStates, context, meanOverStates, maxOverStates, prevOut, t)
   local inputs = {}
 
   -- Create RNN input (see sequencer.lua `buildNetwork('dec')`).
   onmt.utils.Table.append(inputs, prevStates)
   table.insert(inputs, input)
   table.insert(inputs, context)
+  table.insert(inputs, meanOverStates)
+  table.insert(inputs, maxOverStates)
   local inputSize
   if torch.type(input) == 'table' then
     inputSize = input[1]:size(1)
@@ -288,7 +303,7 @@ end
   * `func` - Calls `func(out, t)` each timestep.
 --]]
 
-function EnDecoder:forwardAndApply(batch, encoderStates, context, func)
+function EnDecoder:forwardAndApply(batch, encoderStates, context, meanOverStates, maxOverStates, func)
   -- TODO: Make this a private method.
 
   if self.statesProto == nil then
@@ -302,7 +317,8 @@ function EnDecoder:forwardAndApply(batch, encoderStates, context, func)
   local prevOut, scores
 
   for t = 1, batch.targetLength do
-    prevOut, states, scores = self:forwardOne(batch:getTargetInput(t), states, context, prevOut, t)
+    prevOut, states, scores = self:forwardOne(batch:getTargetInput(t), states,
+        context, meanOverStates, maxOverStates, prevOut, t)
     func(prevOut, t, scores)
   end
 end
@@ -327,21 +343,30 @@ function EnDecoder:forward(batch, encoderStates, context)
   end
 
   local outputs = {}
-  local scoreSum = self.scoreSumProto
-  scoreSum:resize(batch.size, 1):zero()
+  local scoreCumSum = self.scoreSumProto
+  scoreCumSum:resize(batch.targetLength, batch.size)
 
-  self:forwardAndApply(batch, encoderStates, context, function (out)
-    table.insert(outputs, out, scores)
-    scoreSum:add(scores)
-  end)
+  -- might think about just taking beginning and end
+  local meanOverStates = self.meanPool:forward(context)
+  local maxOverStates = self.maxPool:forward(context)
 
-  return outputs, scoreSum
+  self:forwardAndApply(batch, encoderStates, context, meanOverStates, maxOverStates,
+    function (out, t, scores)
+        table.insert(outputs, out)
+        if t > 1 then
+            scoreCumSum[t]:add(scoreCumSum[t-1], scores:view(-1))
+        else
+            scoreCumSum[t]:copy(scores:view(-1))
+        end
+    end)
+
+  return outputs, scoreCumSum
 end
 
-function EnDecoder:sampleFwd(t, stepsBack, batch, context)
+function EnDecoder:getNegativeSamples(t, stepsBack, batch, context)
     if not self.maxes then
-        self.maxes = torch.CudaTensor(1)
-        self.argmaxes = torch.CudaLongTensor(1)
+        self.maxes = torch.Tensor():typeAs(context):resize(1)
+        self.argmaxes = torch.type(context) == 'torch.CudaTensor' and torch.CudaLongTensor(1) or torch.LongTensor(1)
     end
 
     -- get previous shit
@@ -356,19 +381,27 @@ function EnDecoder:sampleFwd(t, stepsBack, batch, context)
     local prevStates = {}
     local tempNet = self:net(batch.targetLength+1)
 
+    local meanOverStates = self.meanPool.output
+    local maxOverStates = self.maxPool.output
+
     -- just gonna do one example at a time (probably don't wanna do it all at once for mem reasons anyway)
     for b = 1, batch.size do
         for i = 1, numOutputs-2 do
             prevStates[i] = outputs[i]:sub(b, b):expand(self.inputNet.vocabSize, outputs[i]:size(2))
         end
         local bout = out:sub(b, b):expand(self.inputNet.vocabSize, out:size(2))
+        local bctx = context:sub(b, b):expand(self.inputNet.vocabSize, context:size(2), context:size(3))
+        local bmean = meanOverStates:sub(b, b):expand(self.inputNet.vocabSize, meanOverStates:size(2))
+        local bmax = maxOverStates:sub(b, b):expand(self.inputNet.vocabSize, maxOverStates:size(2))
 
         for s = 1, stepsBack+1 do
             -- find argmax shit
             local inputs = {}
             onmt.utils.Table.append(inputs, prevStates)
             table.insert(inputs, self.allInputs) -- maybe modify lstm to just take in lut embeddings
-            table.insert(inputs, context)
+            table.insert(inputs, bctx)
+            table.insert(inputs, bmean)
+            table.insert(inputs, bmax)
 
             if self.args.inputFeed then
                 table.insert(inputs, bout)
@@ -393,6 +426,37 @@ function EnDecoder:sampleFwd(t, stepsBack, batch, context)
     return sampleInput
 end
 
+function EnDecoder:fwdOnSamples(t, stepsBack, batch, context, sampleInputs)
+    if not self.sampleScores then
+        self.sampleScores = torch.Tensor():typeAs(context)
+    end
+    self.sampleScores:resize(batch.size):zero()
+
+    -- get previous shit
+    local outputs = self:net(t-1).output
+    local numOutputs = #outputs
+    local prevOut = outputs[numOutputs-1]
+
+    local prevStates = {}
+    for i = 1, numOutputs-2 do
+        table.insert(prevStates, outputs[i])
+    end
+
+    local meanOverStates = self.meanPool.output
+    local maxOverStates = self.maxPool.output
+
+    local scores
+
+    for s = 1, stepsBack+1 do
+        -- should automatically use net:(batch.targetLength+s) and save inputs in self.inputs[batch.targetLength+s]
+        prevOut, prevStates, scores = self:forwardOne(sampleInputs[s], prevStates, context, meanOverStates,
+            maxOverStates, prevOut, batch.targetLength+s)
+        self.sampleScores:add(scores)
+    end
+
+    return self.sampleScores
+end
+
 --[[ Compute the backward update.
 
 Parameters:
@@ -405,60 +469,79 @@ Parameters:
   It returns both the gradInputs and the loss.
   -- ]]
 function EnDecoder:backward(batch, outputs, criterion)
+    local nOutLayers = self.args.numEffectiveLayers + 2
+    local laySizes = {}
+    for i = 1, nOutLayers-1 do
+        table.insert(laySizes, {batch.size, self.args.rnnSize})
+    end
+    -- for scores
+    table.insert(laySizes, {batch.size, 1})
+
     if self.gradOutputsProto == nil then
-        self.gradOutputsProto = onmt.utils.Tensor.initTensorTable(self.args.numEffectiveLayers + 1,
+        self.gradOutputsProto = onmt.utils.Tensor.initTensorTable(nOutLayers,
                                                               self.gradOutputProto,
-                                                              { batch.size, self.args.rnnSize })
-        self.gradSampleOutputsProto = onmt.utils.Tensor.initTensorTable(self.args.numEffectiveLayers + 1,
+                                                              laySizes)
+                                                              --{ batch.size, self.args.rnnSize })
+
+        self.gradSampleOutputsProto = onmt.utils.Tensor.initTensorTable(nOutLayers,
                                                             self.gradSampleOutputProto,
-                                                            { batch.size, self.args.rnnSize })
+                                                            laySizes)
+
+        self.meanPoolOutputsProto = torch.Tensor():typeAs(self.gradOutputsProto)
+        self.maxPoolOutputsProto = torch.Tensor():typeAs(self.gradOutputsProto)
+        self.y = torch.Tensor():typeAs(self.gradOutputsProto)
     end
 
 
     local gradStatesInput = onmt.utils.Tensor.reuseTensorTable(self.gradOutputsProto,
-                                                             { batch.size, self.args.rnnSize })
+                                                             laySizes)
     local gradSampleStatesInput = onmt.utils.Tensor.reuseTensorTable(self.gradSampleOutputsProto,
-                                                            { batch.size, self.args.rnnSize })
+                                                            laySizes)
     local gradContextInput = onmt.utils.Tensor.reuseTensor(self.gradContextProto,
                                                          { batch.size, batch.sourceLength, self.args.rnnSize })
 
+    local meanPoolGradOut = self.meanPoolOutputsProto:resize(batch.size, self.args.rnnSize):zero()
+    local maxPoolGradOut = self.maxPoolOutputsProto:resize(batch.size, self.args.rnnSize):zero()
+    local y = self.y:resize(batch.size):fill(1)
+
     local loss = 0
+    local context = self.inputs[1][self.args.inputIndex.context]
 
     assert(false) -- just need targetInputs, not Outputs, and they need to be 1-longer so we get energy of EOS token
     local maxBack = 2 -- sample at most 3 contiguous tokens for now
     local t = batch.targetLength
     while t >= 2 do -- first is always SOS
         local stepsBack = torch.random(0, math.min(maxBack, t-2))
-        -- get states for samples
-        local sampleInputs = sampleFwd(t, stepsBack)
+        -- get indices of negative samples
+        local sampleInputs = getNegativeSamples(t, stepsBack, batch, context)
         -- go fwd to get sampled states (and scores)
-
-
-        -- assuming for now we only get loss at merge pts (and end)
-        local goldScores = self.goldScorer:forward(outputs[t])
-        local sampleScores = self.sampleScorer:forward(sampleStates)
-        loss = loss + criterion:forward(goldScores, sampleScores)
-        local goldScoreGradOut = criterion:backward(goldScores, sampleScores)
-        for j = 1, #goldScoreGradOut do
-            goldScoreGradOut[j]:div(batch.totalSize) -- ehhhh
+        local sampleScores = fwdOnSamples(sampleInputs)
+        loss = loss + criterion:forward({cumSums[t], sampleScores}, y)
+        local scoreGradOuts = criterion:backward({cumSums[t], sampleScores}, y)
+        for j = 1, #scoreGradOuts do
+            scoreGradOuts[j]:div(batch.totalSize) -- ehhhh
         end
-        local goldRNNGradOut = self.goldScorer:backward(outputs[t], goldScoreGradOut)
-        goldScoreGradOut:neg()
-        local sampleRNNGradOut = self.sampleScorer:backward(outputs[t], goldScoreGradOut)
-        gradStatesInput[#gradStatesInput]:add(goldRNNGradOut)
-        gradSampleStatesInput[#gradSampleStatesInput]:add(sampleRNNGradOut)
+
+        -- N.B. these score gradOuts don't change, since we add scores of each timestep
+        gradStatesInput[nOutLayers]:copy(scoreGradOuts[1])
+        gradSampleStatesInput[nOutLayers]:copy(scoreGradOuts[2])
+        --gradSampleStatesInput[nOutLayers]:neg()
 
         for s = t, t-stepsBack, -1 do
             local gradInput = self:net(s):backward(self.inputs[s], gradStatesInput)
-            local sampleIdx = maxBack-t+s+1
-            local gradSampleInput = self:sampleNet(sampleIdx):backward(sampleInputs[sampleIdx], gradSampleStatesInput)
+            local sampleIdx = batch.targetLength + maxBack-t+s+1
+            local gradSampleInput = self:net(sampleIdx):backward(self.inputs[sampleIdx], gradSampleStatesInput)
             gradContextInput:add(gradInput[self.args.inputIndex.context])
             gradContextInput:add(gradSampleInput[self.args.inputIndex.context])
-            gradStatesInput[#gradStatesInput]:zero()
-            gradSampleStatesInput[#gradSampleStatesInput]:zero()
+            meanPoolGradOut:add(gradInput[self.args.inputIndex.meanCtx])
+            meanPoolGradOut:add(gradSampleInput[self.args.inputIndex.meanCtx])
+            maxPoolGradOut:add(gradInput[self.args.inputIndex.maxCtx])
+            maxPoolGradOut:add(gradSampleInput[self.args.inputIndex.maxCtx])
+            gradStatesInput[nOutLayers-1]:zero()
+            gradSampleStatesInput[nOutLayers-1]:zero()
             if self.args.inputFeed then -- t must be  > 1
-                gradStatesInput[#gradStatesInput]:add(gradInput[self.args.inputIndex.inputFeed])
-                gradSampleStatesInput[#gradSampleStatesInput]:add(gradSampleInput[self.args.inputIndex.inputFeed])
+                gradStatesInput[nOutLayers-1]:add(gradInput[self.args.inputIndex.inputFeed])
+                gradSampleStatesInput[nOutLayers-1]:add(gradSampleInput[self.args.inputIndex.inputFeed])
             end
             for i = 1, #self.statesProto do
                 gradStatesInput[i]:copy(gradInput[i])
@@ -467,7 +550,7 @@ function EnDecoder:backward(batch, outputs, criterion)
         end
 
         -- accumulate into gold state
-        for i = 1, #gradStatesInput do
+        for i = 1, nOutLayers-1 do
             gradStatesInput[i]:add(gradSampleStatesInput[i])
             gradSampleStatesInput[i]:zero()
         end
@@ -480,6 +563,13 @@ function EnDecoder:backward(batch, outputs, criterion)
     -- there is no output loss at first timestep and we must've merged, so just go back
     local gradInput = self:net(t):backward(self.inputs[t], gradStatesInput)
     gradContextInput:add(gradInput[self.args.inputIndex.context])
+    meanPoolGradOut:add(gradInput[self.args.inputIndex.meanCtx])
+    maxPoolGradOut:add(gradInput[self.args.inputIndex.maxCtx])
+
+    -- actually go backward on pooling
+    gradContextInput:add(self.meanPool:backward(context, meanPoolGradOut))
+    gradContextInput:add(self.maxPool:backward(context, maxPoolGradOut))
+
     for i = 1, #self.statesProto do
         gradStatesInput[i]:copy(gradInput[i])
     end
@@ -498,13 +588,14 @@ Parameters:
 
 --]]
 function EnDecoder:computeLoss(batch, encoderStates, context, criterion)
-  encoderStates = encoderStates
+    assert(false)
+  local encoderStates = encoderStates
     or onmt.utils.Tensor.initTensorTable(self.args.numEffectiveLayers,
                                          onmt.utils.Cuda.convert(torch.Tensor()),
                                          { batch.size, self.args.rnnSize })
 
   local loss = 0
-  self:forwardAndApply(batch, encoderStates, context, function (out, t)
+  self:forwardAndApply(batch, encoderStates, context, meanOverStates, maxOverStates, function (out, t)
     local pred = self.generator:forward(out)
     local output = batch:getTargetOutput(t)
     loss = loss + criterion:forward(pred, output)
@@ -524,7 +615,8 @@ Parameters:
 
 --]]
 function EnDecoder:computeScore(batch, encoderStates, context)
-  encoderStates = encoderStates
+    assert(false)
+  local encoderStates = encoderStates
     or onmt.utils.Tensor.initTensorTable(self.args.numEffectiveLayers,
                                          onmt.utils.Cuda.convert(torch.Tensor()),
                                          { batch.size, self.args.rnnSize })

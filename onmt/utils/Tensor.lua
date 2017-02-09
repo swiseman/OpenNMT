@@ -114,17 +114,31 @@ Parameters:
 Returns: an initialized table of tensors.
 
 --]]
+-- local function initTensorTable(size, proto, sizes)
+--   local tab = {}
+--
+--   local base = reuseTensor(proto, sizes)
+--
+--   for _ = 1, size do
+--     table.insert(tab, base:clone())
+--   end
+--
+--   return tab
+-- end
+
 local function initTensorTable(size, proto, sizes)
   local tab = {}
-
-  local base = reuseTensor(proto, sizes)
-
-  for _ = 1, size do
-    table.insert(tab, base:clone())
+  for i = 1, size do
+    local size = sizes -- if just one size
+    if torch.type(sizes) == 'table' and torch.type(sizes[1]) == 'table' then
+        size = sizes[i]
+    end
+    table.insert(tab, proto:clone():resize(torch.LongStorage(size)):zero())
   end
 
   return tab
 end
+
 
 --[[
 Copy tensors from `src` reusing all tensors from `proto`.
