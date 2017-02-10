@@ -209,7 +209,7 @@ local function trainModel(model, trainData, validData, dataset, info)
     optimStates = opt.optim_states
   })
 
-  local checkpoint = onmt.train.Checkpoint.new(opt, model, optim, dataset.dicts)
+  local checkpoint = onmt.train.Checkpoint.new(opt, model, params, optim, dataset.dicts)
 
   local function trainEpoch(epoch, lastValidPpl, doProfile)
       local epochState
@@ -238,7 +238,7 @@ local function trainModel(model, trainData, validData, dataset, info)
           local batch = trainData:getBatch(batchIdx)
           batch.totalSize = batch.size
           if opt.curriculum > 0 then
-              batch.targetLength = math.min(batch.targetLength, epoch)
+              batch.targetLength = math.min(batch.targetLength, epoch+1)
           end
           onmt.utils.Cuda.convert(batch)
 
@@ -270,6 +270,8 @@ local function trainModel(model, trainData, validData, dataset, info)
   end
 
   local validPpl = 0
+  local bestPpl = 0
+  local bestEpoch = -1
 
   if not opt.json_log then
     _G.logger:info('Start training...')
@@ -305,6 +307,12 @@ local function trainModel(model, trainData, validData, dataset, info)
         end
     end
 
+    if validPpl < bestPpl then
+        checkpoint:deleteEpoch(bestPpl, bestEpoch)
+        checkpoint:saveEpoch(validPpl, epochState, not opt.json_log)
+        bestPpl = validPpl
+        bestEpoch = epoch
+    end
     --checkpoint:saveEpoch(validPpl, epochState, not opt.json_log)
   end
 end
