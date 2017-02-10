@@ -26,10 +26,11 @@ Parameters:
   * `generator` - optional, an output [onmt.Generator](onmt+modules+Generator).
   * `inputFeed` - bool, enable input feeding.
 --]]
-function EnDecoder:__init(inputNetwork, rnn, inputFeed)
+function EnDecoder:__init(inputNetwork, rnn, inputFeed, nSampleInputs, maxBack)
   self.rnn = rnn
   self.inputNet = inputNetwork
-  self.maxBack = 2
+  self.maxBack = maxBack or 2
+  self.nSampleInputs = nSampleInputs
 
   self.args = {}
   self.args.rnnSize = self.rnn.outputSize
@@ -102,7 +103,6 @@ function EnDecoder:resetPreallocation()
   self.gradSampleOutputProto = torch.Tensor()
 
   self.sampleInputProto = torch.LongTensor()
-  self.allInputs = torch.range(1, self.inputNet.vocabSize)
 
   self.scoreSumProto = torch.Tensor()
 
@@ -373,10 +373,12 @@ function EnDecoder:forward(batch, encoderStates, context)
   return scoreCumSum
 end
 
-function EnDecoder:getNegativeSamples(t, stepsBack, batch, context)
+-- this takes the max at each timestep
+function EnDecoder:getNegativeSamplesRul(t, stepsBack, batch, context)
     if not self.maxes then
         self.maxes = torch.Tensor():typeAs(context):resize(1)
         self.argmaxes = torch.type(context) == 'torch.CudaTensor' and torch.CudaLongTensor(1) or torch.LongTensor(1)
+        self.allInputs = torch.type(context) == 'torch.CudaTensor' and torch.range(1, self.inputNet.vocabSize):cudaLong() or torch.range(1, self.inputNet.vocabSize):long()
     end
 
     -- get previous shit
@@ -435,6 +437,78 @@ function EnDecoder:getNegativeSamples(t, stepsBack, batch, context)
     end -- end for b
     return sampleInput
 end
+
+-- this samples vocabulary words and then takes the max
+function EnDecoder:getNegativeSamples(t, stepsBack, batch, context)
+    if not self.maxes then
+        self.maxes = torch.Tensor():typeAs(context):resize(1)
+        self.argmaxes = torch.type(context) == 'torch.CudaTensor' and torch.CudaLongTensor(1) or torch.LongTensor(1)
+        self.randPerm = torch.Tensor(self.inputNet.vocabSize)
+        self.randInputs = torch.type(context) == 'torch.CudaTensor' and torch.CudaLongTensor(self.nSampleInputs) or torch.LongTensor(self.nSampleInputs)
+    end
+
+    -- get previous shit
+    local outputs = self:net(t-stepsBack-1, true).output
+    local numOutputs = #outputs
+    local out = outputs[numOutputs-1]
+
+    -- for saving argmaxes
+    local sampleInput = self.sampleInputProto
+    sampleInput:resize(stepsBack+1, batch.size)
+
+    local prevStates = {}
+    local tempNet = self:net(batch.targetLength+1, true)
+
+    local meanOverStates = self.meanPool.output
+    local maxOverStates = self.maxPool.output
+
+    -- just gonna do one example at a time for now
+    for b = 1, batch.size do
+
+        for i = 1, numOutputs-2 do
+            prevStates[i] = outputs[i]:sub(b, b):expand(self.nSampleInputs, outputs[i]:size(2))
+        end
+        local bout = out:sub(b, b):expand(self.nSampleInputs, out:size(2))
+        local bctx = context:sub(b, b):expand(self.nSampleInputs, context:size(2), context:size(3))
+        local bmean = meanOverStates:sub(b, b):expand(self.nSampleInputs, meanOverStates:size(2))
+        local bmax = maxOverStates:sub(b, b):expand(self.nSampleInputs, maxOverStates:size(2))
+
+        for s = 1, stepsBack+1 do
+            -- sample things to max over (for now once per batch)
+            self.randPerm:randperm(self.inputNet.vocabSize)
+            self.randInputs:copy(self.randPerm:sub(1, self.nSampleInputs))
+
+            -- find argmax shit
+            local inputs = {}
+            onmt.utils.Table.append(inputs, prevStates)
+            table.insert(inputs, self.randInputs)
+            table.insert(inputs, bctx)
+            table.insert(inputs, bmean)
+            table.insert(inputs, bmax)
+
+            if self.args.inputFeed then
+                table.insert(inputs, bout)
+            end
+
+            -- get max
+            local currOutputs = tempNet:forward(inputs)
+            torch.max(self.maxes, self.argmaxes, currOutputs[numOutputs]:view(-1), 1)
+            local argmax = self.argmaxes[1]
+            sampleInput[s][b] = self.randInputs[argmax]
+
+            if s < stepsBack + 1 then -- prepare for next timestep
+                for i = 1, numOutputs-2 do
+                    prevStates[i] = currOutputs[i]:sub(argmax, argmax)
+                       :expand(self.inputNet.vocabSize, currOutputs[i]:size(2))
+                end
+                bout = currOutputs[numOutputs-1]:sub(argmax, argmax)
+                    :expand(self.inputNet.vocabSize, currOutputs[numOutputs-1]:size(2))
+            end
+        end -- end for s
+    end -- end for b
+    return sampleInput
+end
+
 
 function EnDecoder:fwdOnSamples(t, stepsBack, batch, context, sampleInputs, pfxScore)
     if not self.sampleScores then

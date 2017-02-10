@@ -38,6 +38,8 @@ cmd:option('-residual', false, [[Add residual connections between RNN layers.]])
 cmd:option('-brnn', false, [[Use a bidirectional encoder]])
 cmd:option('-brnn_merge', 'sum', [[Merge action for the bidirectional hidden states: concat or sum]])
 cmd:option('-margin', 1, [[]])
+cmd:option('-num_sample_inputs', 5000, [[]])
+cmd:option('-max_back', 2, [[]])
 
 cmd:text("")
 cmd:text("**Optimization options**")
