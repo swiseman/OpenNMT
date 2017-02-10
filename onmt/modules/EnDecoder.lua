@@ -116,6 +116,7 @@ function EnDecoder:_buildScorer()
                   :add(nn.JoinTable(2))
                   :add(nn.Linear(3*self.args.rnnSize, 3/2*self.args.rnnSize))
                   :add(nn.ReLU())
+                  --:add(nn.Tanh())
                   :add(nn.Linear(3/2*self.args.rnnSize, 1))
     return mlp
 end
@@ -192,7 +193,15 @@ function EnDecoder:_buildModel()
   table.insert(outputs, attnOutput)
 
   local scorer = self:_buildScorer()
-  table.insert(outputs, scorer({attnOutput, meanCtx, maxCtx}))
+  local scores = scorer({attnOutput, meanCtx, maxCtx})
+
+  -- local rsize = self.args.rnnSize
+  -- local scores = nn.Linear(3/2*rsize, 1)(
+  --                  nn.Tanh()(
+  --                    nn.Linear(3*rsize, 3/2*rsize)(
+  --                      nn.JoinTable(2)({attnOutput, meanCtx, maxCtx})
+  --                   )))
+  table.insert(outputs, scores)
 
   return nn.gModule(inputs, outputs)
 end
@@ -371,7 +380,7 @@ function EnDecoder:getNegativeSamples(t, stepsBack, batch, context)
     end
 
     -- get previous shit
-    local outputs = self:net(t-1, true).output
+    local outputs = self:net(t-stepsBack-1, true).output
     local numOutputs = #outputs
     local out = outputs[numOutputs-1]
 
@@ -427,14 +436,14 @@ function EnDecoder:getNegativeSamples(t, stepsBack, batch, context)
     return sampleInput
 end
 
-function EnDecoder:fwdOnSamples(t, stepsBack, batch, context, sampleInputs)
+function EnDecoder:fwdOnSamples(t, stepsBack, batch, context, sampleInputs, pfxScore)
     if not self.sampleScores then
         self.sampleScores = torch.Tensor():typeAs(context)
     end
-    self.sampleScores:resize(batch.size):zero()
+    self.sampleScores:resize(batch.size):copy(pfxScore)
 
     -- get previous shit
-    local outputs = self:net(t-1, true).output
+    local outputs = self:net(t-stepsBack-1, true).output
     local numOutputs = #outputs
     local prevOut = outputs[numOutputs-1]
 
@@ -511,11 +520,13 @@ function EnDecoder:backward(batch, cumSums, criterion)
     local maxBack = self.maxBack -- sample at most 3 contiguous tokens for now
     local t = batch.targetLength
     while t >= 2 do -- first is always SOS
+        --torch.manualSeed(t)
         local stepsBack = torch.random(0, math.min(maxBack, t-2))
+        --local stepsBack = 0
         -- get indices of negative samples
         local sampleInputs = self:getNegativeSamples(t, stepsBack, batch, context)
-        -- go fwd to get sampled states (and scores)
-        local sampleScores = self:fwdOnSamples(t, stepsBack, batch, context, sampleInputs)
+        -- go fwd to get sampled states (and scores); pass in score of pfx before sampling
+        local sampleScores = self:fwdOnSamples(t, stepsBack, batch, context, sampleInputs, cumSums[t-stepsBack-1])
         loss = loss + criterion:forward({cumSums[t], sampleScores}, y)
         local scoreGradOuts = criterion:backward({cumSums[t], sampleScores}, y)
         for j = 1, #scoreGradOuts do
@@ -528,9 +539,15 @@ function EnDecoder:backward(batch, cumSums, criterion)
         --gradSampleStatesInput[nOutLayers]:neg()
 
         for s = t, t-stepsBack, -1 do
+            --print(self.inputs[s])
+            --print(self:net(s).modules[14]:get(4).gradWeight)
             local gradInput = self:net(s):backward(self.inputs[s], gradStatesInput)
-            local sampleIdx = batch.targetLength + maxBack-t+s+1
+            --print(self:net(s).modules[14]:get(4).gradWeight)
+            local sampleIdx = batch.targetLength + stepsBack-t+s+1
+            --print(self.inputs[sampleIdx])
+            --print(self:net(sampleIdx).modules[14]:get(4).gradWeight)
             local gradSampleInput = self:net(sampleIdx):backward(self.inputs[sampleIdx], gradSampleStatesInput)
+            --print(self:net(t).modules[14]:get(4).gradWeight)
             gradContextInput:add(gradInput[self.args.inputIndex.context])
             gradContextInput:add(gradSampleInput[self.args.inputIndex.context])
             meanPoolGradOut:add(gradInput[self.args.inputIndex.meanCtx])
@@ -557,10 +574,12 @@ function EnDecoder:backward(batch, cumSums, criterion)
 
         -- move to step preceding sampled sequence
         t = t - stepsBack - 1
+        --break
     end
 
-    assert(t == 1)
-    -- there is no output loss at first timestep and we must've merged, so just go back
+    --assert(t == 1)
+    -- we've just merged all gradOuts
+    gradStatesInput[nOutLayers]:zero() -- no output loss at first timestep
     local gradInput = self:net(t):backward(self.inputs[t], gradStatesInput)
     gradContextInput:add(gradInput[self.args.inputIndex.context])
     meanPoolGradOut:add(gradInput[self.args.inputIndex.meanCtx])
@@ -613,15 +632,19 @@ function EnDecoder:computeLoss(batch, encoderStates, context, criterion)
   local y = self.y:resize(batch.size):fill(1)
   local maxBack = self.maxBack
   local t = batch.targetLength
+
   while t >= 2 do -- first is always SOS
+      --torch.manualSeed(t)
       local stepsBack = torch.random(0, math.min(maxBack, t-2))
+      --local stepsBack = 0
       -- get indices of negative samples
       local sampleInputs = self:getNegativeSamples(t, stepsBack, batch, context)
       -- go fwd to get sampled states (and scores)
-      local sampleScores = self:fwdOnSamples(t, stepsBack, batch, context, sampleInputs)
+      local sampleScores = self:fwdOnSamples(t, stepsBack, batch, context, sampleInputs, scoreCumSum[t-stepsBack-1])
       loss = loss + criterion:forward({scoreCumSum[t], sampleScores}, y)
       -- move to step preceding sampled sequence
       t = t - stepsBack - 1
+      --break
   end
 
   return loss
