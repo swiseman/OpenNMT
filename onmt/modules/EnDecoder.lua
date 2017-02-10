@@ -499,10 +499,10 @@ function EnDecoder:getNegativeSamples(t, stepsBack, batch, context)
             if s < stepsBack + 1 then -- prepare for next timestep
                 for i = 1, numOutputs-2 do
                     prevStates[i] = currOutputs[i]:sub(argmax, argmax)
-                       :expand(self.inputNet.vocabSize, currOutputs[i]:size(2))
+                       :expand(self.nSampleInputs, currOutputs[i]:size(2))
                 end
                 bout = currOutputs[numOutputs-1]:sub(argmax, argmax)
-                    :expand(self.inputNet.vocabSize, currOutputs[numOutputs-1]:size(2))
+                    :expand(self.nSampleInputs, currOutputs[numOutputs-1]:size(2))
             end
         end -- end for s
     end -- end for b
