@@ -237,6 +237,9 @@ local function trainModel(model, trainData, validData, dataset, info)
           local batchIdx = epoch <= opt.curriculum and i or batchOrder[i]
           local batch = trainData:getBatch(batchIdx)
           batch.totalSize = batch.size
+          if opt.curriculum > 0 then
+              batch.targetLength = math.min(batch.targetLength, epoch)
+          end
           onmt.utils.Cuda.convert(batch)
 
           optim:zeroGrad(gradParams)
