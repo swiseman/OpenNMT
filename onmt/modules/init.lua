@@ -19,5 +19,7 @@ require('onmt.modules.Generator')
 require('onmt.modules.FeaturesGenerator')
 
 require('onmt.modules.EnDecoder')
+require('onmt.modules.CPLSTM')
+require('onmt.modules.CPGlobalAttention')
 
 return onmt

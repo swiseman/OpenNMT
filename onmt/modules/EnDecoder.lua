@@ -439,6 +439,78 @@ function EnDecoder:getNegativeSamplesRul(t, stepsBack, batch, context)
 end
 
 -- this samples vocabulary words and then takes the max
+function EnDecoder:getNegativeSamplesSlow(t, stepsBack, batch, context)
+    if not self.maxes then
+        self.maxes = torch.Tensor():typeAs(context):resize(1)
+        self.argmaxes = torch.type(context) == 'torch.CudaTensor' and torch.CudaLongTensor(1) or torch.LongTensor(1)
+        self.randPerm = torch.Tensor(self.inputNet.vocabSize)
+        self.randInputs = torch.type(context) == 'torch.CudaTensor' and torch.CudaLongTensor(self.nSampleInputs) or torch.LongTensor(self.nSampleInputs)
+    end
+
+    -- get previous shit
+    local outputs = self:net(t-stepsBack-1, true).output
+    local numOutputs = #outputs
+    local out = outputs[numOutputs-1]
+
+    -- for saving argmaxes
+    local sampleInput = self.sampleInputProto
+    sampleInput:resize(stepsBack+1, batch.size)
+
+    local prevStates = {}
+    local tempNet = self:net(batch.targetLength+1, true)
+
+    local meanOverStates = self.meanPool.output
+    local maxOverStates = self.maxPool.output
+
+    -- just gonna do one example at a time for now
+    for b = 1, batch.size do
+
+        for i = 1, numOutputs-2 do
+            prevStates[i] = outputs[i]:sub(b, b):expand(self.nSampleInputs, outputs[i]:size(2))
+        end
+        local bout = out:sub(b, b):expand(self.nSampleInputs, out:size(2))
+        local bctx = context:sub(b, b):expand(self.nSampleInputs, context:size(2), context:size(3))
+        local bmean = meanOverStates:sub(b, b):expand(self.nSampleInputs, meanOverStates:size(2))
+        local bmax = maxOverStates:sub(b, b):expand(self.nSampleInputs, maxOverStates:size(2))
+
+        for s = 1, stepsBack+1 do
+            -- sample things to max over (for now once per batch)
+            self.randPerm:randperm(self.inputNet.vocabSize)
+            self.randInputs:copy(self.randPerm:sub(1, self.nSampleInputs))
+
+            -- find argmax shit
+            local inputs = {}
+            onmt.utils.Table.append(inputs, prevStates)
+            table.insert(inputs, self.randInputs)
+            table.insert(inputs, bctx)
+            table.insert(inputs, bmean)
+            table.insert(inputs, bmax)
+
+            if self.args.inputFeed then
+                table.insert(inputs, bout)
+            end
+
+            -- get max
+            local currOutputs = tempNet:forward(inputs)
+            torch.max(self.maxes, self.argmaxes, currOutputs[numOutputs]:view(-1), 1)
+            local argmax = self.argmaxes[1]
+            sampleInput[s][b] = self.randInputs[argmax]
+
+            if s < stepsBack + 1 then -- prepare for next timestep
+                for i = 1, numOutputs-2 do
+                    prevStates[i] = currOutputs[i]:sub(argmax, argmax)
+                       :expand(self.nSampleInputs, currOutputs[i]:size(2))
+                end
+                bout = currOutputs[numOutputs-1]:sub(argmax, argmax)
+                    :expand(self.nSampleInputs, currOutputs[numOutputs-1]:size(2))
+            end
+        end -- end for s
+    end -- end for b
+    return sampleInput
+end
+
+
+-- this samples vocabulary words and then takes the max
 function EnDecoder:getNegativeSamples(t, stepsBack, batch, context)
     if not self.maxes then
         self.maxes = torch.Tensor():typeAs(context):resize(1)
@@ -598,6 +670,7 @@ function EnDecoder:backward(batch, cumSums, criterion)
         local stepsBack = torch.random(0, math.min(maxBack, t-2))
         --local stepsBack = 0
         -- get indices of negative samples
+        assert(false) -- dropout issue
         local sampleInputs = self:getNegativeSamples(t, stepsBack, batch, context)
         -- go fwd to get sampled states (and scores); pass in score of pfx before sampling
         local sampleScores = self:fwdOnSamples(t, stepsBack, batch, context, sampleInputs, cumSums[t-stepsBack-1])
@@ -694,14 +767,14 @@ function EnDecoder:computeLoss(batch, encoderStates, context, criterion)
 
   local loss = 0
   self:forwardAndApply(batch, encoderStates, context, meanOverStates, maxOverStates,
-  function (out, t, scores)
-      --table.insert(outputs, out)
-      if t > 1 then
-          scoreCumSum[t]:add(scoreCumSum[t-1], scores:view(-1))
-      else
-          scoreCumSum[t]:copy(scores:view(-1))
-      end
-  end)
+      function (out, t, scores)
+          --table.insert(outputs, out)
+          if t > 1 then
+              scoreCumSum[t]:add(scoreCumSum[t-1], scores:view(-1))
+          else
+              scoreCumSum[t]:copy(scores:view(-1))
+          end
+      end)
 
   local y = self.y:resize(batch.size):fill(1)
   local maxBack = self.maxBack

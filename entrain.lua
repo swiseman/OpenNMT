@@ -270,7 +270,7 @@ local function trainModel(model, trainData, validData, dataset, info)
   end
 
   local validPpl = 0
-  local bestPpl = 0
+  local bestPpl = math.huge
   local bestEpoch = -1
 
   if not opt.json_log then
