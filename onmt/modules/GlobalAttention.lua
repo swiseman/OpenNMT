@@ -37,7 +37,9 @@ function GlobalAttention:_buildModel(dim, justConcat)
   table.insert(inputs, nn.Identity()())
   table.insert(inputs, nn.Identity()())
 
-  local targetT = nn.Linear(dim, dim, false)(inputs[1]) -- batchL x dim
+  local targeTlin = nn.Linear(dim, dim, false)
+  targetTlin.name = "targetTlin"
+  local targetT = targetTlin(inputs[1]) -- batchL x dim
   local context = inputs[2] -- batchL x sourceTimesteps x dim
 
   -- Get attention.
@@ -52,7 +54,11 @@ function GlobalAttention:_buildModel(dim, justConcat)
   local contextCombined = nn.MM()({attn, context}) -- batchL x 1 x dim
   contextCombined = nn.Sum(2)(contextCombined) -- batchL x dim
   contextCombined = nn.JoinTable(2)({contextCombined, inputs[1]}) -- batchL x dim*2
-  local contextOutput = justConcat and contextCombined or nn.Tanh()(nn.Linear(dim*2, dim, false)(contextCombined))
+  local ccLin = nn.Linear(dim*2, dim, false)
+  ccLin.name = "ccLin"
+
+  --local contextOutput = nn.Tanh()(nn.Linear(dim*2, dim, false)(contextCombined))
+  local contextOutput = nn.Tanh()(ccLin(contextCombined))
 
   return nn.gModule(inputs, {contextOutput})
 end

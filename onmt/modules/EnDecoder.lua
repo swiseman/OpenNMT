@@ -26,11 +26,12 @@ Parameters:
   * `generator` - optional, an output [onmt.Generator](onmt+modules+Generator).
   * `inputFeed` - bool, enable input feeding.
 --]]
-function EnDecoder:__init(inputNetwork, rnn, inputFeed, nSampleInputs, maxBack)
+function EnDecoder:__init(inputNetwork, rnn, inputFeed, nSampleInputs, maxBack, sampleScheme)
   self.rnn = rnn
   self.inputNet = inputNetwork
   self.maxBack = maxBack or 2
   self.nSampleInputs = nSampleInputs
+  self.sampleScheme = sampleScheme
 
   self.args = {}
   self.args.rnnSize = self.rnn.outputSize
@@ -118,8 +119,11 @@ function EnDecoder:_buildScorer()
                   :add(nn.ReLU())
                   --:add(nn.Tanh())
                   :add(nn.Linear(3/2*self.args.rnnSize, 1))
+    mlp:get(2).name = "mlplin1"
+    mlp:get(4).name = "mlplin2"
     return mlp
 end
+
 
 --[[ Build a default one time-step of the decoder
 
@@ -201,6 +205,83 @@ function EnDecoder:_buildModel()
   --                    nn.Linear(3*rsize, 3/2*rsize)(
   --                      nn.JoinTable(2)({attnOutput, meanCtx, maxCtx})
   --                   )))
+  table.insert(outputs, scores)
+
+  return nn.gModule(inputs, outputs)
+end
+
+
+function EnDecoder:_buildCPModel()
+  assert(not self.args.inputFeed)
+
+  local inputs = {}
+  local states = {}
+
+  -- Inputs are previous layers first.
+  for _ = 1, self.args.numEffectiveLayers do
+    local h0 = nn.Identity()() -- batchSize x rnnSize
+    table.insert(inputs, h0)
+    table.insert(states, h0)
+  end
+
+  local x = nn.Identity()() -- nSamples-long
+  table.insert(inputs, x)
+  self.args.inputIndex.x = #inputs
+
+  local context = nn.Identity()() -- batchSize x sourceLength x rnnSize
+  table.insert(inputs, context)
+  self.args.inputIndex.context = #inputs
+
+  local meanCtx = nn.Identity()()
+  table.insert(inputs, meanCtx)
+  self.args.inputIndex.meanCtx = #inputs
+
+  local maxCtx = nn.Identity()()
+  table.insert(inputs, maxCtx)
+  self.args.inputIndex.maxCtx = #inputs
+
+  -- local inputFeed
+  -- if self.args.inputFeed then
+  --   inputFeed = nn.Identity()() -- batchSize x rnnSize
+  --   table.insert(inputs, inputFeed)
+  --   self.args.inputIndex.inputFeed = #inputs
+  -- end
+
+  -- Compute the input network.
+  self.inputNetClone = self.inputNet:clone('weight', 'bias')
+  local input = self.inputNetClone(x)
+
+  -- If set, concatenate previous decoder output.
+  -- if self.args.inputFeed then
+  --   input = nn.JoinTable(2)({input, inputFeed})
+  -- end
+  table.insert(states, input)
+
+  -- Forward states and input into the RNN.
+  assert(false) -- need to share parameters of rnn and attn
+  self.cplstm = onmt.CPLSTM(self.rnn.numEffectiveLayers/2, self.inputNet.net.weight:size(2),
+      self.args.rnnSize, self.rnn.dropout) -- ignoring residual shit
+  --local outputs = self.rnn(states)
+  local outputs = self.cplstm(states) -- each output is nSamples*batchSize x rnnSize
+
+  -- The output of a subgraph is a node: split it to access the last RNN output.
+  outputs = { outputs:split(self.args.numEffectiveLayers) }
+
+  -- Compute the attention here using h^L as query.
+  self.cpAttnLayer = onmt.CPGlobalAttention(self.args.rnnSize)
+  attnLayer.name = 'decoderAttn'
+  local attnOutput = self.cpAttnLayer({outputs[#outputs], context})
+  if self.rnn.dropout > 0 then
+    attnOutput = nn.Dropout(self.rnn.dropout)(attnOutput)
+  end
+  table.insert(outputs, attnOutput)
+
+  self.cpScorer = self:_buildScorer()
+  -- for meanCtx and maxCtx I'm just gonna replicate...
+  meanCtx = nn.Reshape(-1, self.args.rnnSize, false)(nn.Replicate(self.nSampleInputs, 2)(meanCtx))
+  maxCtx = nn.Reshape(-1, self.args.rnnSize, false)(nn.Replicate(self.nSampleInputs, 2)(maxCtx))
+  local scores = self.cpScorer({attnOutput, meanCtx, maxCtx})
+
   table.insert(outputs, scores)
 
   return nn.gModule(inputs, outputs)
@@ -374,71 +455,6 @@ function EnDecoder:forward(batch, encoderStates, context)
   return scoreCumSum
 end
 
--- this takes the max at each timestep, and is supes slow
-function EnDecoder:getNegativeSamplesRul(t, stepsBack, batch, context)
-    if not self.maxes then
-        self.maxes = torch.Tensor():typeAs(context):resize(1)
-        self.argmaxes = torch.type(context) == 'torch.CudaTensor' and torch.CudaLongTensor(1) or torch.LongTensor(1)
-        self.allInputs = torch.type(context) == 'torch.CudaTensor' and torch.range(1, self.inputNet.vocabSize):cudaLong() or torch.range(1, self.inputNet.vocabSize):long()
-    end
-
-    -- get previous shit
-    local outputs = self:net(t-stepsBack-1, true).output
-    local numOutputs = #outputs
-    local out = outputs[numOutputs-1]
-
-    -- for saving argmaxes
-    local sampleInput = self.sampleInputProto
-    sampleInput:resize(stepsBack+1, batch.size)
-
-    local prevStates = {}
-    local tempNet = self:net(batch.targetLength+1, true)
-
-    local meanOverStates = self.meanPool.output
-    local maxOverStates = self.maxPool.output
-
-    -- just gonna do one example at a time (probably don't wanna do it all at once for mem reasons anyway)
-    for b = 1, batch.size do
-        for i = 1, numOutputs-2 do
-            prevStates[i] = outputs[i]:sub(b, b):expand(self.inputNet.vocabSize, outputs[i]:size(2))
-        end
-        local bout = out:sub(b, b):expand(self.inputNet.vocabSize, out:size(2))
-        local bctx = context:sub(b, b):expand(self.inputNet.vocabSize, context:size(2), context:size(3))
-        local bmean = meanOverStates:sub(b, b):expand(self.inputNet.vocabSize, meanOverStates:size(2))
-        local bmax = maxOverStates:sub(b, b):expand(self.inputNet.vocabSize, maxOverStates:size(2))
-
-        for s = 1, stepsBack+1 do
-            -- find argmax shit
-            local inputs = {}
-            onmt.utils.Table.append(inputs, prevStates)
-            table.insert(inputs, self.allInputs) -- maybe modify lstm to just take in lut embeddings
-            table.insert(inputs, bctx)
-            table.insert(inputs, bmean)
-            table.insert(inputs, bmax)
-
-            if self.args.inputFeed then
-                table.insert(inputs, bout)
-            end
-
-            -- get max
-            local currOutputs = tempNet:forward(inputs)
-            torch.max(self.maxes, self.argmaxes, currOutputs[numOutputs]:view(-1), 1)
-            local argmax = self.argmaxes[1]
-            sampleInput[s][b] = argmax
-
-            if s < stepsBack + 1 then -- prepare for next timestep
-                for i = 1, numOutputs-2 do
-                    prevStates[i] = currOutputs[i]:sub(argmax, argmax)
-                       :expand(self.inputNet.vocabSize, currOutputs[i]:size(2))
-                end
-                bout = currOutputs[numOutputs-1]:sub(argmax, argmax)
-                    :expand(self.inputNet.vocabSize, currOutputs[numOutputs-1]:size(2))
-            end
-        end -- end for s
-    end -- end for b
-    return sampleInput
-end
-
 -- this samples vocabulary words and then takes the max
 function EnDecoder:getNegativeSamplesSlow(t, stepsBack, batch, context)
     if not self.maxes then
@@ -511,15 +527,14 @@ function EnDecoder:getNegativeSamplesSlow(t, stepsBack, batch, context)
 end
 
 
--- this samples vocabulary words and then takes the max
-function EnDecoder:getNegativeSamples(t, stepsBack, batch, context)
-
+-- this does the scoring in batch
+function EnDecoder:getNegativeSamplesInBatch(t, stepsBack, batch, context)
     if not self.maxes then
         self.maxes = torch.Tensor():typeAs(context):resize(1)
         self.argmaxes = torch.type(context) == 'torch.CudaTensor' and torch.CudaLongTensor(1) or torch.LongTensor(1)
         self.randPerm = torch.Tensor(self.inputNet.vocabSize)
         self.bigInps = {} -- holds prevStates, inputs, ctx, mean, max, optionally out
-        for i = 1, self.numEffectiveLayers do
+        for i = 1, self.args.numEffectiveLayers do
             table.insert(self.bigInps, torch.Tensor():typeAs(context))
         end
         local randInputs = torch.type(context) == 'torch.CudaTensor' and torch.CudaLongTensor() or torch.LongTensor()
@@ -535,10 +550,10 @@ function EnDecoder:getNegativeSamples(t, stepsBack, batch, context)
     local nSamples = self.nSampleInputs
     local bigInps = self.bigInps
     for i = 1, #self.bigInps do
-        if i == self.numEffectiveLayers + 1 then
+        if i == self.args.numEffectiveLayers + 1 then
             bigInps[i]:resize(batch.size*nSamples)
-        elseif i == self.numEffectiveLayers + 2 then
-            bigInps[i]:resize(batch.size*nSample, ctx:size(2), ctx:size(3))
+        elseif i == self.args.numEffectiveLayers + 2 then
+            bigInps[i]:resize(batch.size*nSamples, context:size(2), context:size(3))
         else
             bigInps[i]:resize(batch.size*nSamples, self.args.rnnSize)
         end
@@ -547,8 +562,8 @@ function EnDecoder:getNegativeSamples(t, stepsBack, batch, context)
     -- for saving argmaxes
     self.maxes:resize(batch.size, 1)
     self.argmaxes:resize(batch.size, 1)
-    local sampleInput = self.sampleInputProto
-    sampleInput:resize(stepsBack+1, batch.size)
+    local sampleInputs = self.sampleInputProto
+    sampleInputs:resize(stepsBack+1, batch.size)
 
     -- get previous shit
     local outputs = self:net(t-stepsBack-1, true).output
@@ -563,34 +578,34 @@ function EnDecoder:getNegativeSamples(t, stepsBack, batch, context)
     -- self.randInputs:copy(self.randPerm:sub(1, self.nSampleInputs))
     --
     -- -- fill 'er up
-    -- bigInps[self.numEffectiveLayers+1]:view(batch.size, nSamples)
+    -- bigInps[self.args.numEffectiveLayers+1]:view(batch.size, nSamples)
     --   :copy(self.randPerm:sub(1, nSamples):view(1, nSamples):expand(batch.size, nSamples))
 
     for s = 1, stepsBack+1 do
 
         for b = 1, batch.size do
-            for i = 1, self.numEffectiveLayers do
-                torch.repeatTensor(bigInps[i]:sub((b-1)*nSamples, b*nSamples),
+            for i = 1, self.args.numEffectiveLayers do
+                torch.repeatTensor(bigInps[i]:sub((b-1)*nSamples+1, b*nSamples),
                     outputs[i]:sub(b, b), nSamples, 1)
             end
 
             self.randPerm:randperm(self.inputNet.vocabSize)
-            bigInps[self.numEffectiveLayers+1]:sub((b-1)*nSamples, b*nSamples)
+            bigInps[self.args.numEffectiveLayers+1]:sub((b-1)*nSamples+1, b*nSamples)
                 :copy(self.randPerm:sub(1, nSamples))
 
             if s == 1 then -- otherwise, these things stay the same from previous step...
-                torch.repeatTensor(bigInps[self.numEffectiveLayers+2]:sub((b-1)*nSamples, b*nSamples),
+                torch.repeatTensor(bigInps[self.args.numEffectiveLayers+2]:sub((b-1)*nSamples+1, b*nSamples),
                     context:sub(b, b), nSamples, 1, 1)
 
-                torch.repeatTensor(bigInps[self.numEffectiveLayers+3]:sub((b-1)*nSamples, b*nSamples),
+                torch.repeatTensor(bigInps[self.args.numEffectiveLayers+3]:sub((b-1)*nSamples+1, b*nSamples),
                      meanOverStates:sub(b, b), nSamples, 1)
 
-                torch.repeatTensor(bigInps[self.numEffectiveLayers+4]:sub((b-1)*nSamples, b*nSamples),
+                torch.repeatTensor(bigInps[self.args.numEffectiveLayers+4]:sub((b-1)*nSamples+1, b*nSamples),
                      maxOverStates:sub(b, b), nSamples, 1)
             end
 
             if self.args.inputFeed then
-                torch.repeatTensor(bigInps[self.numEffectiveLayers+5]:sub((b-1)*nSamples, b*nSamples),
+                torch.repeatTensor(bigInps[self.args.numEffectiveLayers+5]:sub((b-1)*nSamples+1, b*nSamples),
                     out:sub(b, b), nSamples, 1)
             end
         end -- end for b
@@ -601,9 +616,9 @@ function EnDecoder:getNegativeSamples(t, stepsBack, batch, context)
 
         for b = 1, batch.size do
             local argmax = self.argmaxes[b][1]
-            sampleInputs[s][b] = bigInps[self.numEffectiveLayers+1][(b-1)*nSamples+argmax]
+            sampleInputs[s][b] = bigInps[self.args.numEffectiveLayers+1][(b-1)*nSamples+argmax]
             if s < stepsBack + 1 then -- move things up for next step
-                for i = 1, self.numEffectiveLayers do
+                for i = 1, self.args.numEffectiveLayers do
                     currOutputs[i][b]:copy(currOutputs[i][(b-1)*nSamples+argmax])
                 end
                 if self.args.inputFeed then
@@ -617,15 +632,100 @@ function EnDecoder:getNegativeSamples(t, stepsBack, batch, context)
             out = currOutputs[numOutputs-1]
         end
     end -- end for s
-    return sampleInput
+    return sampleInputs
 end
 
 
+-- completely random
 function EnDecoder:getRandomNegativeSamples(t, stepsBack, batch, context)
     local sampleInput = self.sampleInputProto
     sampleInput:resize(stepsBack+1, batch.size)
     sampleInput:copy(torch.Tensor(stepsBack+1, batch.size):random(self.inputNet.vocabSize))
     return sampleInput
+end
+
+
+function EnDecoder:shareRestParams(net)
+    local found = 0
+    local otherlin1, otherlin2
+
+    net:apply(function(mod)
+                    if mod.name then
+                        if mod.name == "mlplin1" then
+                            otherlin1 = mod
+                            found = found + 1
+                        elseif mod.name == "mlplin2" then
+                            otherlin2 = mod
+                            found = found + 1
+                        end
+                    end
+                end)
+    assert(found == 2)
+    self.cpScorer:get(2):share(otherlin1, 'weight', 'bias')
+    self.cpScorer:get(4):share(otherlin2, 'weight', 'bias')
+    self.inputNetClone:share(self.inputNet, 'weight', 'bias')
+end
+
+
+function EnDecoder:getCPNegativeSamples(t, stepsBack, batch, context)
+    local nSamples = self.nSampleInputs
+
+    if not self.cpModel then
+        self.cpModel = self:_buildCPModel():cuda()
+        local tempNet = self:net(1)
+        self.cplstm:shareParams(tempNet)
+        self.cpAttnLayer:shareParams(tempNet)
+        self:shareRestParams(tempNet)
+        self.maxes = torch.Tensor():typeAs(context):resize(1)
+        self.argmaxes = torch.type(context) == 'torch.CudaTensor' and torch.CudaLongTensor(1) or torch.LongTensor(1)
+        self.randPerm = torch.Tensor(self.inputNet.vocabSize)
+        self.randInputs = torch.type(context) == 'torch.CudaTensor' and torch.CudaLongTensor(nSamples) or torch.LongTensor(nSamples)
+    end
+
+    self.cplstm:setRepeats(batch.size, nSamples)
+    self.cpAttnLayer:setRepeats(batch.size, nSamples)
+
+    self.maxes:resize(batch.size, 1)
+    self.argmaxes:resize(batch.size, 1)
+
+    local sampleInputs = self.sampleInputProto
+    sampleInputs:resize(stepsBack+1, batch.size)
+
+    -- get previous shit
+    local outputs = self:net(t-stepsBack-1, true).output
+    local numOutputs = #outputs
+    local out = outputs[numOutputs-1]
+    local inputs = {}
+    for i = 1, numOutputs-2 do
+        table.insert(inputs, outputs[i])
+    end
+    table.insert(inputs, self.randInputs) -- will get filled
+    table.insert(inputs, context)
+    table.insert(inputs, meanOverStates)
+    table.insert(inputs, maxOverStates)
+
+    local meanOverStates = self.meanPool.output
+    local maxOverStates = self.maxPool.output
+
+    for s = 1, stepsBack+1 do
+        self.randPerm:randperm(self.inputNet.vocabSize)
+        self.randInputs:copy(self.randPerm:sub(1, nSamples))
+        local currOutputs = self.cpModel:forward(inputs) -- gives batchSize*nSampleInputs outputs
+        torch.max(self.maxes, self.argmaxes, currOutputs[numOutputs]:view(batch.size, nSamples), 2)
+        --store argmax indices in sampleInputs
+        sampleInputs[s]:index(self.randInputs, 1, self.argmaxes:view(-1))
+
+        if s < stepsBack + 1 then
+            for i = 1, #self.args.numEffectiveLayers do
+                for b = 1, batch.size do
+                    local argmax = self.argmaxes[b][1]
+                    currOutputs[i][b]:copy(currOutputs[i][(b-1)*nSamples+argmax])
+                end
+                inputs[i] = currOutputs[i]:sub(1, batch.size)
+            end
+        end
+    end -- end for s
+    return sampleInputs
 end
 
 
@@ -658,6 +758,16 @@ function EnDecoder:fwdOnSamples(t, stepsBack, batch, context, sampleInputs, pfxS
     end
 
     return self.sampleScores
+end
+
+function EnDecoder:getNegativeSamples(t, stepsBack, batch, context)
+    if self.sampleScheme == 'cp' then
+        return self:getCPNegativeSamples(t, stepsBack, batch, context)
+    elseif self.sampleScheme == 'batch' then
+        return self:getNegativeSamplesInBatch(t, stepsBack, batch, context)
+    else
+        return self:getRandomNegativeSamples(t, stepsBack, batch, context)
+    end
 end
 
 --[[ Compute the backward update.

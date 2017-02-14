@@ -50,6 +50,41 @@ function CPLSTM:setRepeats(batchSize, nInputs)
     self.forgetViewer:resetSize(batchSize, -1, self.outputSize)
 end
 
+function CPLSTM:shareParams(net)
+    local myfound = 0
+    local myi2h, myh2h
+    -- first find our own linears
+    self.net:apply(function(mod)
+                        if mod.name then
+                            if mod.name == "i2h" then
+                                myi2h = mod
+                                myfound = myfound + 1
+                            elseif mod.name == "h2h" then
+                                myh2h = mod
+                                myfound = myfound + 1
+                            end
+                        end
+                    end)
+    assert(myfound == 2)
+
+    local otherfound = 0
+    local otheri2h, otherh2h
+    net:apply(function(mod)
+                        if mod.name then
+                            if mod.name == "i2h" then
+                                otheri2h = mod
+                                otherfound = otherfound + 1
+                            elseif mod.name == "h2h" then
+                                otherh2h = mod
+                                otherfound = otherfound + 1
+                            end
+                        end
+                    end)
+    assert(otherfound == 2)
+    myi2h:share(otheri2h, 'weight', 'bias')
+    myh2h:share(otherh2h, 'weight', 'bias')
+end
+
 --[[ Stack the LSTM units. ]]
 function CPLSTM:_buildModel(layers, inputSize, hiddenSize, dropout, residual)
   local inputs = {}
@@ -121,7 +156,10 @@ function CPLSTM:_buildLayer(inputSize, hiddenSize)
       i2hlin.bias:sub(hiddenSize+1, 2*hiddenSize):fill(2)
   end
   local i2h = i2hlin(x)
-  local h2h = nn.Linear(hiddenSize, 4 * hiddenSize, false)(prevH)
+
+  local h2hlin = nn.Linear(hiddenSize, 4 * hiddenSize, false)
+  h2hlin.name = "h2h"
+  local h2h = h2hlin(prevH)
 
   local defaultBatchSize, defaultNInpts = 32, 10 -- doesn't matter
   self.inpRep = nn.Replicate(defaultBatchSize, 1, 2)

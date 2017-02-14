@@ -39,12 +39,49 @@ function CPGlobalAttention:setRepeats(batchSize, nInputs)
     self.attnDistViewer:resetSize(batchSize, nInputs, -1)
 end
 
+function CPGlobalAttention:shareParams(net)
+    local myfound = 0
+    local mylin1, mylin2
+    -- first find our own linears
+    self.net:apply(function(mod)
+                        if mod.name then
+                            if mod.name == "targeTlin" then
+                                mylin1 = mod
+                                myfound = myfound + 1
+                            elseif mod.name == "ccLin" then
+                                mylin2 = mod
+                                myfound = myfound + 1
+                            end
+                        end
+                    end)
+    assert(myfound == 2)
+
+    local otherfound = 0
+    local otherlin1, otherlin2
+    net:apply(function(mod)
+                        if mod.name then
+                            if mod.name == "targeTlin" then
+                                otherlin1 = mod
+                                otherfound = otherfound + 1
+                            elseif mod.name == "ccLin" then
+                                otherlin2 = mod
+                                otherfound = otherfound + 1
+                            end
+                        end
+                    end)
+    assert(otherfound == 2)
+    mylin1:share(otherlin1, 'weight', 'bias')
+    mylin2:share(otherlin2, 'weight', 'bias')
+end
+
 function CPGlobalAttention:_buildModel(dim, justConcat)
   local inputs = {}
   table.insert(inputs, nn.Identity()())
   table.insert(inputs, nn.Identity()())
 
-  local targetT = nn.Linear(dim, dim, false)(inputs[1]) -- batchL x dim
+  local targetTlin = nn.Linear(dim, dim, false)
+  targetTlin.name = "targetTlin"
+  local targetT = targetTlin(inputs[1]) -- batchL x dim
   local context = inputs[2] -- batchL x sourceTimesteps x dim; 2nd and 3rd dim will get transposed
 
   -- Get attention.
@@ -70,7 +107,10 @@ function CPGlobalAttention:_buildModel(dim, justConcat)
   --contextCombined = nn.Sum(2)(contextCombined) -- batchL x dim
   contextCombined = nn.View(-1, dim)(contextCombined) -- batchL*nInputs x dim
   contextCombined = nn.JoinTable(2)({contextCombined, inputs[1]}) -- batchL x dim*2
-  local contextOutput = nn.Tanh()(nn.Linear(dim*2, dim, false)(contextCombined))
+
+  local ccLin = nn.Linear(dim*2, dim, false)
+  ccLin.name = "ccLin"
+  local contextOutput = nn.Tanh()(cclin(contextCombined))
 
   return nn.gModule(inputs, {contextOutput})
 end
