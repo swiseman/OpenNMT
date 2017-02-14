@@ -37,7 +37,7 @@ function GlobalAttention:_buildModel(dim, justConcat)
   table.insert(inputs, nn.Identity()())
   table.insert(inputs, nn.Identity()())
 
-  local targeTlin = nn.Linear(dim, dim, false)
+  local targetTlin = nn.Linear(dim, dim, false)
   targetTlin.name = "targetTlin"
   local targetT = targetTlin(inputs[1]) -- batchL x dim
   local context = inputs[2] -- batchL x sourceTimesteps x dim

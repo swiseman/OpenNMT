@@ -45,7 +45,7 @@ function CPGlobalAttention:shareParams(net)
     -- first find our own linears
     self.net:apply(function(mod)
                         if mod.name then
-                            if mod.name == "targeTlin" then
+                            if mod.name == "targetTlin" then
                                 mylin1 = mod
                                 myfound = myfound + 1
                             elseif mod.name == "ccLin" then
@@ -60,7 +60,7 @@ function CPGlobalAttention:shareParams(net)
     local otherlin1, otherlin2
     net:apply(function(mod)
                         if mod.name then
-                            if mod.name == "targeTlin" then
+                            if mod.name == "targetTlin" then
                                 otherlin1 = mod
                                 otherfound = otherfound + 1
                             elseif mod.name == "ccLin" then
@@ -110,7 +110,7 @@ function CPGlobalAttention:_buildModel(dim, justConcat)
 
   local ccLin = nn.Linear(dim*2, dim, false)
   ccLin.name = "ccLin"
-  local contextOutput = nn.Tanh()(cclin(contextCombined))
+  local contextOutput = nn.Tanh()(ccLin(contextCombined))
 
   return nn.gModule(inputs, {contextOutput})
 end

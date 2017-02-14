@@ -258,7 +258,6 @@ function EnDecoder:_buildCPModel()
   table.insert(states, input)
 
   -- Forward states and input into the RNN.
-  assert(false) -- need to share parameters of rnn and attn
   self.cplstm = onmt.CPLSTM(self.rnn.numEffectiveLayers/2, self.inputNet.net.weight:size(2),
       self.args.rnnSize, self.rnn.dropout) -- ignoring residual shit
   --local outputs = self.rnn(states)
@@ -269,7 +268,7 @@ function EnDecoder:_buildCPModel()
 
   -- Compute the attention here using h^L as query.
   self.cpAttnLayer = onmt.CPGlobalAttention(self.args.rnnSize)
-  attnLayer.name = 'decoderAttn'
+  self.cpAttnLayer.name = 'decoderAttn'
   local attnOutput = self.cpAttnLayer({outputs[#outputs], context})
   if self.rnn.dropout > 0 then
     attnOutput = nn.Dropout(self.rnn.dropout)(attnOutput)
@@ -692,6 +691,8 @@ function EnDecoder:getCPNegativeSamples(t, stepsBack, batch, context)
     sampleInputs:resize(stepsBack+1, batch.size)
 
     -- get previous shit
+    local meanOverStates = self.meanPool.output
+    local maxOverStates = self.maxPool.output
     local outputs = self:net(t-stepsBack-1, true).output
     local numOutputs = #outputs
     local out = outputs[numOutputs-1]
@@ -704,16 +705,16 @@ function EnDecoder:getCPNegativeSamples(t, stepsBack, batch, context)
     table.insert(inputs, meanOverStates)
     table.insert(inputs, maxOverStates)
 
-    local meanOverStates = self.meanPool.output
-    local maxOverStates = self.maxPool.output
-
     for s = 1, stepsBack+1 do
         self.randPerm:randperm(self.inputNet.vocabSize)
         self.randInputs:copy(self.randPerm:sub(1, nSamples))
         local currOutputs = self.cpModel:forward(inputs) -- gives batchSize*nSampleInputs outputs
         torch.max(self.maxes, self.argmaxes, currOutputs[numOutputs]:view(batch.size, nSamples), 2)
         --store argmax indices in sampleInputs
-        sampleInputs[s]:index(self.randInputs, 1, self.argmaxes:view(-1))
+        --sampleInputs[s]:index(self.randInputs, 1, self.argmaxes:view(-1)) -- apparently can't do this
+        for b = 1, batch.size do
+            sampleInputs[s][b] = self.randInputs[self.argmaxes[b][1]]
+        end
 
         if s < stepsBack + 1 then
             for i = 1, #self.args.numEffectiveLayers do
