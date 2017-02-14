@@ -66,6 +66,7 @@ function Cuda.convert(obj)
         return obj:long()
       else
         return obj:float()
+        --return obj:double()
       end
     end
   end

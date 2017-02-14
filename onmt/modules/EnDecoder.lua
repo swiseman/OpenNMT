@@ -121,6 +121,7 @@ function EnDecoder:_buildScorer()
                   :add(nn.Linear(3/2*self.args.rnnSize, 1))
     mlp:get(2).name = "mlplin1"
     mlp:get(4).name = "mlplin2"
+    print("if you add layers to scorer, redo sharing!!!!")
     return mlp
 end
 
@@ -670,7 +671,7 @@ function EnDecoder:getCPNegativeSamples(t, stepsBack, batch, context)
     local nSamples = self.nSampleInputs
 
     if not self.cpModel then
-        self.cpModel = self:_buildCPModel():cuda()
+        self.cpModel = torch.type(context) == 'torch.CudaTensor' and self:_buildCPModel():cuda() or self:_buildCPModel()
         local tempNet = self:net(1)
         self.cplstm:shareParams(tempNet)
         self.cpAttnLayer:shareParams(tempNet)
@@ -708,7 +709,18 @@ function EnDecoder:getCPNegativeSamples(t, stepsBack, batch, context)
     for s = 1, stepsBack+1 do
         self.randPerm:randperm(self.inputNet.vocabSize)
         self.randInputs:copy(self.randPerm:sub(1, nSamples))
+
+        -- -- for testing
+        -- self.randInputs:copy(batch:getTargetInput(t-stepsBack-1+s))
+
         local currOutputs = self.cpModel:forward(inputs) -- gives batchSize*nSampleInputs outputs
+
+        -- -- for testing
+        -- local rulOutputs = self:net(t-stepsBack-1+s).output[numOutputs]
+        -- for b = 1, batch.size do
+        --     print(b, "; rul:", rulOutputs[b][1], "; erm:", currOutputs[numOutputs][(b-1)*nSamples+b][1])
+        -- end
+
         torch.max(self.maxes, self.argmaxes, currOutputs[numOutputs]:view(batch.size, nSamples), 2)
         --store argmax indices in sampleInputs
         --sampleInputs[s]:index(self.randInputs, 1, self.argmaxes:view(-1)) -- apparently can't do this
@@ -828,7 +840,7 @@ function EnDecoder:backward(batch, cumSums, criterion)
         local stepsBack = torch.random(0, math.min(maxBack, t-2))
         --local stepsBack = 0
         -- get indices of negative samples
-        assert(false) -- dropout issue
+        --assert(false) -- dropout issue
         local sampleInputs = self:getNegativeSamples(t, stepsBack, batch, context)
         -- go fwd to get sampled states (and scores); pass in score of pfx before sampling
         local sampleScores = self:fwdOnSamples(t, stepsBack, batch, context, sampleInputs, cumSums[t-stepsBack-1])
