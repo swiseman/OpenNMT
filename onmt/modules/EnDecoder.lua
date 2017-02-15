@@ -212,8 +212,9 @@ function EnDecoder:_buildModel()
 end
 
 
-function EnDecoder:_buildCPModel()
+function EnDecoder:_buildCPModel(nSampleInputs)
   assert(not self.args.inputFeed)
+  local nSampleInputs = nSampleInputs or self.nSampleInputs
 
   local inputs = {}
   local states = {}
@@ -278,8 +279,8 @@ function EnDecoder:_buildCPModel()
 
   self.cpScorer = self:_buildScorer()
   -- for meanCtx and maxCtx I'm just gonna replicate...
-  meanCtx = nn.Reshape(-1, self.args.rnnSize, false)(nn.Replicate(self.nSampleInputs, 2)(meanCtx))
-  maxCtx = nn.Reshape(-1, self.args.rnnSize, false)(nn.Replicate(self.nSampleInputs, 2)(maxCtx))
+  meanCtx = nn.Reshape(-1, self.args.rnnSize, false)(nn.Replicate(nSampleInputs, 2)(meanCtx))
+  maxCtx = nn.Reshape(-1, self.args.rnnSize, false)(nn.Replicate(nSampleInputs, 2)(maxCtx))
   local scores = self.cpScorer({attnOutput, meanCtx, maxCtx})
 
   table.insert(outputs, scores)
@@ -999,8 +1000,9 @@ function EnDecoder:computeScore(batch, encoderStates, context)
 end
 
 function EnDecoder:greedyFwd(batch, encoderStates, context)
+    local V = self.inputNet.vocabSize
     if not self.cpModel then
-        self.cpModel = torch.type(context) == 'torch.CudaTensor' and self:_buildCPModel():cuda() or self:_buildCPModel()
+        self.cpModel = torch.type(context) == 'torch.CudaTensor' and self:_buildCPModel(V):cuda() or self:_buildCPModel(V)
         local tempNet = self:net(1)
         self.cplstm:shareParams(tempNet)
         self.cpAttnLayer:shareParams(tempNet)
@@ -1011,16 +1013,16 @@ function EnDecoder:greedyFwd(batch, encoderStates, context)
         self.argmaxes = torch.type(context) == 'torch.CudaTensor' and torch.CudaLongTensor() or torch.LongTensor()
     end
     if not self.allInputs then
-        local allInputs = torch.range(self.inputNet.vocabSize)
+        local allInputs = torch.range(1, V)
         self.allInputs = torch.type(context) == 'torch.CudaTensor' and allInputs:cudaLong() or allInputs:long()
     end
 
     self.cpModel:evaluate()
-    local V = self.inputNet.vocabSize
+
 
     -- may want a smaller batch size...
     self.cplstm:setRepeats(batch.size, V)
-    self.cpAttnLayer:setRepeats(batch.size, nSamples)
+    self.cpAttnLayer:setRepeats(batch.size, V)
 
     self.maxes:resize(batch.size, 1)
     self.argmaxes:resize(batch.size, 1)
