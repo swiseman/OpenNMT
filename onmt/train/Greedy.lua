@@ -77,11 +77,12 @@ local function convert_predtostring(ts, size, dict, probs, n)
 end
 
 local function greedy_eval(model, data, src_dict, targ_dict,
-    start_print_batch, end_print_batch)
+    start_print_batch, end_print_batch, last_batch)
 
   local start_print_batch = start_print_batch or 0
   local ngram_crct = torch.zeros(4)
   local ngram_total = torch.zeros(4)
+  local last_batch = last_batch or data:batchCount()
 
   model.encoder:evaluate()
   model.decoder:evaluate()
@@ -89,7 +90,7 @@ local function greedy_eval(model, data, src_dict, targ_dict,
       model.decoder.cpModel:evaluate()
   end
 
-  for i = 1, data:batchCount() do
+  for i = 1, last_batch do
     local batch = onmt.utils.Cuda.convert(data:getBatch(i))
     local encoderStates, context = model.encoder:forward(batch)
     local preds = model.decoder:greedyFwd(batch, encoderStates, context)
@@ -130,6 +131,7 @@ local function greedy_eval(model, data, src_dict, targ_dict,
   print("bleu", bleu)
 
   allTraining(model)
+  return bleu
 end
 
 

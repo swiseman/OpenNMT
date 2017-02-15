@@ -304,10 +304,13 @@ local function trainModel(model, trainData, validData, dataset, info)
     epochState:log(epochState.numIterations)
     globalProfiler:stop("train")
 
-    globalProfiler:start("valid")
-    validPpl = eval(model, criterion, validData)
-    globalProfiler:stop("valid")
-    onmt.train.Greedy.greedy_eval(model, validData, nil, g_tgtDict, 1, 5)
+    -- globalProfiler:start("valid")
+    -- validPpl = eval(model, criterion, validData)
+    -- globalProfiler:stop("valid")
+    globalProfiler:start("val gbleu")
+    -- negate...
+    validPpl = -onmt.train.Greedy.greedy_eval(model, validData, nil, g_tgtDict, 1, 10, 120)
+    globalProfiler:stop("val gbleu")
 
     if not opt.json_log then
       if opt.profiler then _G.logger:info('profile: %s', globalProfiler:log()) end
@@ -365,7 +368,8 @@ local function main()
   local validData = onmt.data.Dataset.new(dataset.valid.src, dataset.valid.tgt, true)
 
   trainData:setBatchSize(opt.max_batch_size)
-  validData:setBatchSize(opt.max_batch_size) -- maybe set this to be lower???
+  --validData:setBatchSize(opt.max_batch_size) -- maybe set this to be lower???
+  validData:setBatchSize(16)
 
   if not opt.json_log then
     _G.logger:info(' * vocabulary size: source = %d; target = %d',
