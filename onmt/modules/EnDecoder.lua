@@ -997,3 +997,83 @@ function EnDecoder:computeScore(batch, encoderStates, context)
 
   return score
 end
+
+function EnDecoder:greedyFwd(batch, encoderStates, context)
+    if not self.cpModel then
+        self.cpModel = torch.type(context) == 'torch.CudaTensor' and self:_buildCPModel():cuda() or self:_buildCPModel()
+        local tempNet = self:net(1)
+        self.cplstm:shareParams(tempNet)
+        self.cpAttnLayer:shareParams(tempNet)
+        self:shareRestParams(tempNet)
+    end
+    if not self.maxes then
+        self.maxes = torch.Tensor():typeAs(context)
+        self.argmaxes = torch.type(context) == 'torch.CudaTensor' and torch.CudaLongTensor() or torch.LongTensor()
+    end
+    if not self.allInputs then
+        local allInputs = torch.range(self.inputNet.vocabSize)
+        self.allInputs = torch.type(context) == 'torch.CudaTensor' and allInputs:cudaLong() or allInputs:long()
+    end
+
+    self.cpModel:evaluate()
+    local V = self.inputNet.vocabSize
+
+    -- may want a smaller batch size...
+    self.cplstm:setRepeats(batch.size, V)
+    self.cpAttnLayer:setRepeats(batch.size, nSamples)
+
+    self.maxes:resize(batch.size, 1)
+    self.argmaxes:resize(batch.size, 1)
+
+    local predInputs = self.sampleInputProto
+    predInputs:resize(batch.targetLength, batch.size)
+
+    -- local scoreCumSum = self.scoreSumProto
+    -- scoreCumSum:resize(batch.targetLength, batch.size)
+
+    local meanOverStates = self.meanPool:forward(context)
+    local maxOverStates = self.maxPool:forward(context)
+
+    if self.statesProto == nil then
+      self.statesProto = onmt.utils.Tensor.initTensorTable(#encoderStates,
+                                                           self.stateProto,
+                                                           { batch.size, self.args.rnnSize })
+    end
+    local states = onmt.utils.Tensor.copyTensorTable(self.statesProto, encoderStates)
+    local prevOut, scores
+
+    -- put thru start token normally
+    predInputs[1]:copy(batch:getTargetInput(1))
+    prevOut, states, scores = self:forwardOne(predInputs[1], states,
+        context, meanOverStates, maxOverStates, prevOut, 1)
+
+    -- now we'll fix this for the rest
+    table.insert(states, self.allInputs)
+    table.insert(states, context)
+    table.insert(states, meanOverStates)
+    table.insert(states, maxOverStates)
+    -- assuming no input feeding
+    -- if self.args.inputFeed then
+    --     table.insert(states, prevOut)
+    -- end
+    for t = 2, batch.targetLength do
+        local currOutputs = self.cpModel:forward(states) -- gives batchsize*allInputs outputs
+        torch.max(self.maxes, self.argmaxes, currOutputs[#currOutputs]:view(batch.size, V), 2)
+        predInputs[t]:copy(self.argmaxes:view(-1))
+
+        -- need to either place argmax states just right, or go thru again
+        if t < batch.targetLength then
+            for i = 1, self.args.numEffectiveLayers do
+                for b = 1, batch.size do
+                    currOutputs[i][b]:copy(currOutputs[i][(b-1)*V+self.argmaxes[b][1]])
+                end
+                --states[i] = currOutputs[i]:sub(1, batch.size)
+                states[i]:copy(currOutputs[i]:sub(1, batch.size)) -- above is fine too i think
+            end
+        end
+    end
+
+    self.cpModel:training()
+
+    return predInputs
+end

@@ -19,6 +19,7 @@ cmd:option('-save_model', '', [[Model filename (the model will be saved as
                               <save_model>_epochN_PPL.t7 where PPL is the validation perplexity]])
 cmd:option('-train_from', '', [[If training from a checkpoint then this is the path to the pretrained model.]])
 cmd:option('-continue', false, [[If training from a checkpoint, whether to continue the training in the same configuration or not.]])
+cmd:option('-just_eval', false, [[]])
 
 cmd:text("")
 cmd:text("**Model options**")
@@ -172,6 +173,9 @@ local function eval(model, criterion, data)
 
   model.encoder:evaluate()
   model.decoder:evaluate()
+  if model.decoder.cpModel then
+      model.decoder.cpModel:evaluate()
+  end
 
   for i = 1, data:batchCount() do
     local batch = onmt.utils.Cuda.convert(data:getBatch(i))
@@ -182,6 +186,9 @@ local function eval(model, criterion, data)
 
   model.encoder:training()
   model.decoder:training()
+  if model.decoder.cpModel then
+      model.decoder.cpModel:training()
+  end
 
   return loss/total --math.exp(loss / total)
 end
@@ -279,6 +286,11 @@ local function trainModel(model, trainData, validData, dataset, info)
     _G.logger:info('Start training...')
   end
 
+  if opt.just_eval then
+      onmt.train.Greedy.greedy_eval(model, validData, nil, g_tgtDict, 1, 10)
+      return
+  end
+
   for epoch = opt.start_epoch, opt.end_epoch do
     if not opt.json_log then
       _G.logger:info('')
@@ -295,6 +307,7 @@ local function trainModel(model, trainData, validData, dataset, info)
     globalProfiler:start("valid")
     validPpl = eval(model, criterion, validData)
     globalProfiler:stop("valid")
+    onmt.train.Greedy.greedy_eval(model, validData, nil, g_tgtDict, 1, 5)
 
     if not opt.json_log then
       if opt.profiler then _G.logger:info('profile: %s', globalProfiler:log()) end
@@ -346,12 +359,13 @@ local function main()
   end
 
   local dataset = torch.load(opt.data, 'binary', false)
+  g_tgtDict = dataset.dicts.tgt.words
 
   local trainData = onmt.data.Dataset.new(dataset.train.src, dataset.train.tgt, true)
   local validData = onmt.data.Dataset.new(dataset.valid.src, dataset.valid.tgt, true)
 
   trainData:setBatchSize(opt.max_batch_size)
-  validData:setBatchSize(opt.max_batch_size)
+  validData:setBatchSize(opt.max_batch_size) -- maybe set this to be lower???
 
   if not opt.json_log then
     _G.logger:info(' * vocabulary size: source = %d; target = %d',
