@@ -96,8 +96,8 @@ local function greedy_eval(model, data, src_dict, targ_dict,
     for n = 1, batch.size do
         -- will just go up to true gold_length
         local trulen = batch.targetSize[n] -- should maybe add 1???
-        local pred_sent = preds:select(2, n):sub(2, trulen+1):totable()
-        local gold_sent = batch.targetInput:select(2, n):sub(2, trulen+1):totable()
+        local pred_sent = preds:select(2, n):sub(2, trulen):totable()
+        local gold_sent = batch.targetInput:select(2, n):sub(2, trulen):totable()
         local prec = get_ngram_prec(pred_sent, gold_sent, 4)
         for ii = 1, 4 do
             ngram_crct[ii] = ngram_crct[ii] + prec[ii][2]
@@ -107,7 +107,7 @@ local function greedy_eval(model, data, src_dict, targ_dict,
             local targ_string = convert_tostring(batch.targetInput:select(2, n),
                 batch.targetLength, targ_dict)
             local gen_targ_string = convert_tostring(preds:select(2, n),
-                batch.targetLength+1, targ_dict)
+                batch.targetLength, targ_dict)
             -- local gen_targ_string = convert_predtostring(preds:select(2, n),
             --     batch.targetLength+1, targ_dict, probs, n)
             print( "True  :", targ_string)
