@@ -279,8 +279,10 @@ function EnDecoder:_buildCPModel(nSampleInputs)
 
   self.cpScorer = self:_buildScorer()
   -- for meanCtx and maxCtx I'm just gonna replicate...
-  meanCtx = nn.Reshape(-1, self.args.rnnSize, false)(nn.Replicate(nSampleInputs, 2)(meanCtx))
-  maxCtx = nn.Reshape(-1, self.args.rnnSize, false)(nn.Replicate(nSampleInputs, 2)(maxCtx))
+  self.meanRep = nn.Replicate(nSampleInputs, 2)
+  self.maxRep = nn.Replicate(nSampleInputs, 2)
+  meanCtx = nn.Reshape(-1, self.args.rnnSize, false)(self.meanRep(meanCtx))
+  maxCtx = nn.Reshape(-1, self.args.rnnSize, false)(self.maxRep(maxCtx))
   local scores = self.cpScorer({attnOutput, meanCtx, maxCtx})
 
   table.insert(outputs, scores)
@@ -667,6 +669,12 @@ function EnDecoder:shareRestParams(net)
     self.inputNetClone:share(self.inputNet, 'weight', 'bias')
 end
 
+function EnDecoder:setRepeats(batchSize, nSamples)
+    self.cplstm:setRepeats(batchSize, nSamples)
+    self.cpAttnLayer:setRepeats(batchSize, nSamples)
+    self.meanRep.nfeatures = nSamples
+    self.maxRep.nfeatures = nSamples
+end
 
 function EnDecoder:getCPNegativeSamples(t, stepsBack, batch, context)
     local nSamples = self.nSampleInputs
@@ -683,8 +691,7 @@ function EnDecoder:getCPNegativeSamples(t, stepsBack, batch, context)
         self.randInputs = torch.type(context) == 'torch.CudaTensor' and torch.CudaLongTensor(nSamples) or torch.LongTensor(nSamples)
     end
 
-    self.cplstm:setRepeats(batch.size, nSamples)
-    self.cpAttnLayer:setRepeats(batch.size, nSamples)
+    self:setRepeats(batch.size, nSamples)
 
     self.maxes:resize(batch.size, 1)
     self.argmaxes:resize(batch.size, 1)
@@ -1020,9 +1027,7 @@ function EnDecoder:greedyFwd(batch, encoderStates, context)
     self.cpModel:evaluate()
 
 
-    -- may want a smaller batch size...
-    self.cplstm:setRepeats(batch.size, V)
-    self.cpAttnLayer:setRepeats(batch.size, V)
+    self:setRepeats(batch.size, V)
 
     self.maxes:resize(batch.size, 1)
     self.argmaxes:resize(batch.size, 1)
