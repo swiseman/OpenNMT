@@ -1081,7 +1081,7 @@ function EnDecoder:greedyFwd(batch, encoderStates, context, saveScores)
         if saveScores then
             self.savedScores[2][t]:add(self.savedScores[2][t-1], self.maxes:view(-1))
             local trueInpIdxs = batch:getTargetInput(t):view(batch.size, 1)
-            self.savedScores[1][t]:view(batch.size, 1):gather(scores, 2, trueInpIdxs)
+            self.savedScores[1][t]:view(batch.size, 1):gather(scores:view(batch.size, V), 2, trueInpIdxs)
             self.savedScores[1][t]:add(self.savedScores[1][t-1])
         end
 

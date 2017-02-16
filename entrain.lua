@@ -247,7 +247,7 @@ local function trainModel(model, trainData, validData, dataset, info)
           local batch = trainData:getBatch(batchIdx)
           batch.totalSize = batch.size
           if opt.curriculum > 0 then
-              batch.targetLength = math.min(batch.targetLength, epoch+1)
+              batch.targetLength = math.min(batch.targetLength, 2*epoch)
           end
           onmt.utils.Cuda.convert(batch)
 
