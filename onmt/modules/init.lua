@@ -21,5 +21,6 @@ require('onmt.modules.FeaturesGenerator')
 require('onmt.modules.EnDecoder')
 require('onmt.modules.CPLSTM')
 require('onmt.modules.CPGlobalAttention')
+require('onmt.modules.TrueMultiMarginCriterion')
 
 return onmt

@@ -37,6 +37,7 @@ cmd:option('-input_feed', 1, [[Feed the context vector at each time step as addi
 cmd:option('-residual', false, [[Add residual connections between RNN layers.]])
 cmd:option('-brnn', false, [[Use a bidirectional encoder]])
 cmd:option('-brnn_merge', 'sum', [[Merge action for the bidirectional hidden states: concat or sum]])
+cmd:option('-margin', 0, [[]])
 
 cmd:text("")
 cmd:text("**Optimization options**")
@@ -148,7 +149,17 @@ local function buildCriterion(vocabSize, features)
     criterion:add(nll)
   end
 
-  addNllCriterion(vocabSize)
+  local function addMarginCriterion(margin)
+      local mcc = nn.TrueMultiMarginCriterion(margin, onmt.Constants.PAD)
+      mcc.sizeAverage = false
+      criterion:add(mcc)
+  end
+
+  if opt.margin and opt.margin > 0 then
+      addMarginCriterion(opt.margin)
+  else
+      addNllCriterion(vocabSize)
+  end
 
   for j = 1, #features do
     addNllCriterion(features[j]:size())
