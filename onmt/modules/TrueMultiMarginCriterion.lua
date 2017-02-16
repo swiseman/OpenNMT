@@ -15,21 +15,22 @@ function TrueMultiMarginCriterion:updateOutput(input, y)
         self.argmaxes = torch.type(input) == 'torch.CudaTensor'
             and torch.CudaLongTensor() or torch.LongTensor()
         self.truescores = torch.Tensor():typeAs(input)
-        self.yidxs = self.argmaxes:clone()
         if self.ignoreIdx then
+            self.ycopy = torch.Tensor():typeAs(input)
             self.mask = torch.Tensor():typeAs(input)
         end
     end
     self.maxes:resize(input:size(1), 1)
     self.argmaxes:resize(input:size(1), 1)
     self.truescores:resize(input:size(1), 1)
-    self.yidxs:resize(y:size(1)):copy(y)
+
     if self.ignoreIdx then
-        self.mask:resizeAs(y)
-        self.mask:ne(y, self.ignoreIdx)
+        self.ycopy:resize(y:size(1)):copy(y)
+        self.mask:resizeAs(self.ycopy)
+        self.mask:ne(self.ycopy, self.ignoreIdx)
     end
 
-    self.truescores:gather(input, 2, self.yidxs:view(input:size(1), 1))
+    self.truescores:gather(input, 2, y:view(input:size(1), 1))
     torch.max(self.maxes, self.argmaxes, input, 2)
     self.maxes:add(self.margin)
     self.maxes:add(-1, self.truescores)
@@ -62,6 +63,6 @@ function TrueMultiMarginCriterion:updateGradInput(input, y)
     self.gradInput:scatter(2, self.argmaxes:view(input:size(1), 1), grads)
     grads:neg()
 
-    self.gradInput:scatter(2, self.yidxs:view(input:size(1), 1), grads)
+    self.gradInput:scatter(2, y:view(input:size(1), 1), grads)
     return self.gradInput
 end
