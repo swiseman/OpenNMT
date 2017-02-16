@@ -93,10 +93,11 @@ local function greedy_eval(model, data, src_dict, targ_dict,
   for i = 1, last_batch do
     local batch = onmt.utils.Cuda.convert(data:getBatch(i))
     local encoderStates, context = model.encoder:forward(batch)
-    local preds = model.decoder:greedyFwd(batch, encoderStates, context)
+    local saveScores = i >= start_print_batch and i <= end_print_batch
+    local preds, scores = model.decoder:greedyFwd(batch, encoderStates, context, saveScores)
     for n = 1, batch.size do
         -- will just go up to true gold_length
-        local trulen = batch.targetSize[n] -- should maybe add 1???
+        local trulen = batch.targetSize[n]
         local pred_sent = preds:select(2, n):sub(2, trulen):totable()
         local gold_sent = batch.targetInput:select(2, n):sub(2, trulen):totable()
         local prec = get_ngram_prec(pred_sent, gold_sent, 4)
@@ -112,7 +113,9 @@ local function greedy_eval(model, data, src_dict, targ_dict,
             -- local gen_targ_string = convert_predtostring(preds:select(2, n),
             --     batch.targetLength+1, targ_dict, probs, n)
             print( "True  :", targ_string)
+            print(scores[1]:select(2, n))
             print( "Gen   :", gen_targ_string)
+            print(scores[2]:select(2, n))
             print(" ")
         end
     end

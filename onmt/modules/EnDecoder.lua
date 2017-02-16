@@ -1006,7 +1006,7 @@ function EnDecoder:computeScore(batch, encoderStates, context)
   return score
 end
 
-function EnDecoder:greedyFwd(batch, encoderStates, context)
+function EnDecoder:greedyFwd(batch, encoderStates, context, saveScores)
     local V = self.inputNet.vocabSize
     if not self.cpModel then
         self.cpModel = torch.type(context) == 'torch.CudaTensor' and self:_buildCPModel(V):cuda() or self:_buildCPModel(V)
@@ -1023,9 +1023,11 @@ function EnDecoder:greedyFwd(batch, encoderStates, context)
         local allInputs = torch.range(1, V)
         self.allInputs = torch.type(context) == 'torch.CudaTensor' and allInputs:cudaLong() or allInputs:long()
     end
+    if saveScores and not self.savedScores then
+        self.savedScores = torch.Tensor():typeAs(context)
+    end
 
     self.cpModel:evaluate()
-
 
     self:setRepeats(batch.size, V)
 
@@ -1034,6 +1036,10 @@ function EnDecoder:greedyFwd(batch, encoderStates, context)
 
     local predInputs = self.sampleInputProto
     predInputs:resize(batch.targetLength, batch.size)
+
+    if saveScores then
+        self.savedScores:resize(2, batch.targetLength, batch.size)
+    end
 
     -- local scoreCumSum = self.scoreSumProto
     -- scoreCumSum:resize(batch.targetLength, batch.size)
@@ -1054,6 +1060,10 @@ function EnDecoder:greedyFwd(batch, encoderStates, context)
     prevOut, states, scores = self:forwardOne(predInputs[1], states,
         context, meanOverStates, maxOverStates, prevOut, 1)
 
+    if saveScores then
+        self.savedScores:select(2, 1):copy(scores:view(1,-1):expand(2,batch.size))
+    end
+
     -- now we'll fix this for the rest
     table.insert(states, self.allInputs)
     table.insert(states, context)
@@ -1065,8 +1075,15 @@ function EnDecoder:greedyFwd(batch, encoderStates, context)
     -- end
     for t = 2, batch.targetLength do
         local currOutputs = self.cpModel:forward(states) -- gives batchsize*allInputs outputs
-        torch.max(self.maxes, self.argmaxes, currOutputs[#currOutputs]:view(batch.size, V), 2)
+        local scores = currOutputs[#currOutputs]
+        torch.max(self.maxes, self.argmaxes, scores:view(batch.size, V), 2)
         predInputs[t]:copy(self.argmaxes:view(-1))
+        if saveScores then
+            self.savedScores[2][t]:add(self.savedScores[2][t-1], self.maxes:view(-1))
+            local trueInpIdxs = batch:getTargetInput(t):view(batch.size, 1)
+            self.savedScores[1][t]:view(batch.size, 1):gather(scores, 2, trueInpIdxs)
+            self.savedScores[1][t]:add(self.savedScores[1][t-1])
+        end
 
         -- need to either place argmax states just right, or go thru again
         if t < batch.targetLength then
@@ -1082,5 +1099,5 @@ function EnDecoder:greedyFwd(batch, encoderStates, context)
 
     self.cpModel:training()
 
-    return predInputs
+    return predInputs, self.savedScores
 end
