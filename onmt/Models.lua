@@ -120,7 +120,7 @@ local function buildDecoder(opt, dicts, verbose)
   if #dicts.features > 0 then
     generator = onmt.FeaturesGenerator.new(opt.rnn_size, dicts.words:size(), dicts.features)
   else
-    generator = onmt.Generator.new(opt.rnn_size, dicts.words:size())
+    generator = onmt.Generator.new(opt.rnn_size, dicts.words:size(), opt.margin > 0)
   end
 
   if opt.input_feed == 1 then
