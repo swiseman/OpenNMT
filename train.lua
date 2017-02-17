@@ -67,6 +67,7 @@ cmd:option('-pre_word_vecs_dec', '', [[If a valid path is specified, then this w
                                      See README for specific formatting instructions.]])
 cmd:option('-fix_word_vecs_enc', false, [[Fix word embeddings on the encoder side]])
 cmd:option('-fix_word_vecs_dec', false, [[Fix word embeddings on the decoder side]])
+cmd:option('-l2_reg', 0, [[]])
 
 cmd:text("")
 cmd:text("**Other options**")
@@ -312,6 +313,12 @@ local function trainModel(model, trainData, validData, dataset, info)
         onmt.utils.Parallel.accGradParams(gradParams, batches)
 
         -- Update the parameters.
+        if opt.l2_reg > 0 then
+            for j = 1, #gradParams do
+                gradParams[j]:add(opt.l2_reg, params[j])
+            end
+        end
+
         optim:prepareGrad(gradParams[1], opt.max_grad_norm)
         optim:updateParams(params[1], gradParams[1])
 
