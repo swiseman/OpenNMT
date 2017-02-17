@@ -92,6 +92,7 @@ onmt.utils.Logger.declareOpts(cmd)
 onmt.utils.Profiler.declareOpts(cmd)
 
 local opt = cmd:parse(arg)
+print(opt)
 
 local function initParams(model, verbose)
   local numParams = 0
@@ -454,7 +455,7 @@ local function trainModel(model, trainData, validData, dataset, info)
       optim:updateLearningRate(validPpl, epoch)
     end
 
-    checkpoint:saveEpoch(validPpl, epochState, not opt.json_log)
+    --checkpoint:saveEpoch(validPpl, epochState, not opt.json_log)
   end
 end
 
