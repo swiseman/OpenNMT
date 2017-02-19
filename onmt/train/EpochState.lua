@@ -76,7 +76,7 @@ function EpochState:log(batchIndex, json)
     if self.en then
         stats = stats .. string.format('Loss %.3f', self:getTrainLoss())
     else
-        stats = stats .. string.format('Perplexity %.2f', self:getTrainPpl())
+        stats = stats .. string.format('Perplexity %.3f', self:getTrainPpl())
     end
     _G.logger:info(stats)
   end

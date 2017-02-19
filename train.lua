@@ -56,7 +56,8 @@ cmd:option('-max_grad_norm', 5, [[If the norm of the gradient vector exceeds thi
 cmd:option('-dropout', 0.3, [[Dropout probability. Dropout is applied between vertical LSTM stacks.]])
 cmd:option('-learning_rate_decay', 0.5, [[Decay learning rate by this much if (i) perplexity does not decrease
                                         on the validation set or (ii) epoch has gone past the start_decay_at_limit]])
-cmd:option('-start_decay_at', 9, [[Start decay after this epoch]])
+cmd:optin('-decay_update2', false, [[]])
+cmd:option('-start_decay_at', 10000, [[Start decay after this epoch]])
 cmd:option('-curriculum', 0, [[For this many epochs, order the minibatches based on source
                              sequence length. Sometimes setting this to 1 will increase convergence speed.]])
 cmd:option('-pre_word_vecs_enc', '', [[If a valid path is specified, then this will load
@@ -315,8 +316,8 @@ local function trainModel(model, trainData, validData, dataset, info)
 
         -- Update the parameters.
         if opt.l2_reg > 0 then
-            for j = 1, #gradParams do
-                gradParams[j]:add(opt.l2_reg, params[j])
+            for j = 1, #gradParams[1] do
+                gradParams[1][j]:add(opt.l2_reg, params[1][j])
             end
         end
 
@@ -425,6 +426,8 @@ local function trainModel(model, trainData, validData, dataset, info)
   end
 
   local validPpl = 0
+  local bestPpl = math.huge
+  local bestEpoch = -1
 
   if not opt.json_log then
     _G.logger:info('Start training...')
@@ -448,13 +451,23 @@ local function trainModel(model, trainData, validData, dataset, info)
 
     if not opt.json_log then
       if opt.profiler then _G.logger:info('profile: %s', globalProfiler:log()) end
-      _G.logger:info('Validation perplexity: %.2f', validPpl)
+      _G.logger:info('Validation perplexity: %.3f', validPpl)
     end
 
     if opt.optim == 'sgd' then
-      optim:updateLearningRate(validPpl, epoch)
+        if opt.decay_update2 then
+            optim:updateLearningRate2(validPpl, epoch)
+        else
+            optim:updateLearningRate(validPpl, epoch)
+        end
     end
 
+    if validPpl < bestPpl then
+        checkpoint:deleteEpoch(bestPpl, bestEpoch)
+        checkpoint:saveEpoch(validPpl, epochState, not opt.json_log)
+        bestPpl = validPpl
+        bestEpoch = epoch
+    end
     --checkpoint:saveEpoch(validPpl, epochState, not opt.json_log)
   end
 end
