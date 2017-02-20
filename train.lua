@@ -619,8 +619,8 @@ local function main()
       model.encoder:evaluate()
       model.decoder:evaluate()
 
-      for i = 1, data:batchCount() do
-        local batch = onmt.utils.Cuda.convert(data:getBatch(i))
+      for i = 1, validData:batchCount() do
+        local batch = onmt.utils.Cuda.convert(validData:getBatch(i))
         local encoderStates, context = model.encoder:forward(batch)
         local preds = model.decoder:greedyFixedFwd(batch, encoderStates, context)
         for n = 1, batch.size do
