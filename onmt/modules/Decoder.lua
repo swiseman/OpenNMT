@@ -288,7 +288,7 @@ end
   Returns: Table of top hidden state for each timestep.
 --]]
 function Decoder:forward(batch, encoderStates, context)
-  encoderStates = encoderStates
+  local encoderStates = encoderStates
     or onmt.utils.Tensor.initTensorTable(self.args.numEffectiveLayers,
                                          onmt.utils.Cuda.convert(torch.Tensor()),
                                          { batch.size, self.args.rnnSize })
@@ -388,7 +388,7 @@ Parameters:
 
 --]]
 function Decoder:computeLoss(batch, encoderStates, context, criterion)
-  encoderStates = encoderStates
+  local encoderStates = encoderStates
     or onmt.utils.Tensor.initTensorTable(self.args.numEffectiveLayers,
                                          onmt.utils.Cuda.convert(torch.Tensor()),
                                          { batch.size, self.args.rnnSize })
@@ -431,4 +431,34 @@ function Decoder:computeScore(batch, encoderStates, context)
   end)
 
   return score
+end
+
+function Decoder:greedyFixedFwd(batch, encoderStates, context)
+    if not self.greedy_inp then
+        self.greedy_inp = torch.CudaTensor()
+        self.maxes = torch.CudaTensor()
+        self.argmaxes = torch.CudaLongTensor()
+    end
+    local PAD, EOS = onmt.Constants.PAD, onmt.Constants.EOS
+    self.greedy_inp:resize(batch.targetLength+1, batch.size):fill(PAD)
+    self.maxes:resize(batch.size, 1)
+    self.argmaxes:resize(batch.size, 1)
+
+    if self.statesProto == nil then
+        self.statesProto = onmt.utils.Tensor.initTensorTable(#encoderStates,
+                                                             self.stateProto,
+                                                             { batch.size, self.args.rnnSize })
+    end
+
+    local prevOut
+    local states = onmt.utils.Tensor.copyTensorTable(self.statesProto, encoderStates)
+
+    self.greedy_inp[1]:copy(batch:getTargetInput(1)) -- should be start token
+    for t = 1, batch.targetLength do
+      prevOut, states = self:forwardOne(self.greedy_inp[t], states, context, prevOut, t)
+      local preds = self.generator:forward(prevOut)[1]
+      torch.max(self.maxes, self.argmaxes, preds, 2)
+      self.greedy_inp[t+1]:copy(self.argmaxes:view(-1))
+    end
+    return self.greedy_inp
 end

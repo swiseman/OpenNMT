@@ -19,6 +19,7 @@ cmd:option('-save_model', '', [[Model filename (the model will be saved as
                               <save_model>_epochN_PPL.t7 where PPL is the validation perplexity]])
 cmd:option('-train_from', '', [[If training from a checkpoint then this is the path to the pretrained model.]])
 cmd:option('-continue', false, [[If training from a checkpoint, whether to continue the training in the same configuration or not.]])
+cmd:option('-just_eval', false, [[]])
 
 cmd:text("")
 cmd:text("**Model options**")
@@ -150,6 +151,14 @@ local function buildCriterion(vocabSize, features)
     -- Let the training code manage loss normalization.
     nll.sizeAverage = false
     criterion:add(nll)
+  end
+
+  local function addMarginCriterionSum(margin)
+      local w = torch.ones(vocabSize)
+      w[onmt.Constants.PAD] = 0
+      local mcc = nn.MultiMarginCriterion(1, w, margin)
+      mcc.sizeAverage = false
+      criterion:add(mcc)
   end
 
   local function addMarginCriterion(margin)
@@ -595,7 +604,40 @@ local function main()
     end
   end)
 
-  trainModel(model, trainData, validData, dataset, checkpoint.info)
+  if opt.just_eval then
+      local validPpl = eval(model, criterion, validData)
+      print("got", validPpl)
+
+      local function convert_tostring(ts, size, dict)
+         local strtbl = {}
+         for i = 1, size do
+             table.insert(strtbl, dict.idxToLabel[ts[i]])
+         end
+         return stringx.join(' ', strtbl)
+      end
+
+      model.encoder:evaluate()
+      model.decoder:evaluate()
+
+      for i = 1, data:batchCount() do
+        local batch = onmt.utils.Cuda.convert(data:getBatch(i))
+        local encoderStates, context = model.encoder:forward(batch)
+        local preds = model.decoder:greedyFixedFwd(batch, encoderStates, context)
+        for n = 1, batch.size do
+            local targ_string = convert_tostring(batch.targetInput:select(2, n),
+                batch.targetLength, dataset.dicts.tgt.words)
+            local gen_targ_string = convert_tostring(preds:select(2, n),
+                batch.targetLength, dataset.dicts.tgt.words)
+            print( "True  :", targ_string)
+            print( "Gen   :", gen_targ_string)
+        end
+      end
+
+      model.encoder:training()
+      model.decoder:training()
+  else
+    trainModel(model, trainData, validData, dataset, checkpoint.info)
+  end
 
   _G.logger:shutDown()
 end
