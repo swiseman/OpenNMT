@@ -1,7 +1,7 @@
 -- require 'nn'
 -- onmt = {}
 
-local MarginalNLLCriterion, parent = torch.class('onmt.MarginalNLLCriterion', 'nn.Criterion')
+local MarginalNLLCriterion, parent = torch.class('nn.MarginalNLLCriterion', 'nn.Criterion')
 
 function MarginalNLLCriterion:__init()
    parent.__init(self)
@@ -9,7 +9,7 @@ function MarginalNLLCriterion:__init()
 end
 
 
---[[ This will output the negative log marginal, even though we'll ignore the log when doing gradients
+--[[
 
 Parameters:
 
@@ -66,7 +66,7 @@ function MarginalNLLCriterion:updateGradInput(input, target)
         end
     end
 
-    -- faster than doing the arithmetic up there
+    -- faster than doing the arithmetic up there for some reason
     self.rowSums:neg()
     self.gradInput:cdiv(self.rowSums:expand(input:size(1), input:size(2)))
 
