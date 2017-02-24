@@ -161,6 +161,53 @@ local function loadDecoder(pretrained, clone)
   return onmt.Decoder.load(pretrained)
 end
 
+-- adapted for torch resnet code
+
+local function make_bytenet_relu_block(d, mask, kW, dil)
+    -- input assumed to be batchSize x 2d x 1 x seqLen; treating as an image
+    local block = nn.Sequential()
+                    :add(nn.ReLU()) -- in theory, BN before
+                    -- args: nInPlane, nOutPlane, kW, kH, dW, dH, padW, padH
+                    :add(cudnn.SpatialConvolution(2*d, d, 1, 1, 1, 1)) -- batchSize x d x 1 x seqLen
+                    :add(nn.ReLU())
+    if mask then
+        assert(false)
+    else
+        -- args: nInPlane, nOutPlane, kW, kH, dW, dH, padW, padH, dilationW, dilationH
+        block:add(nn.SpatialDilatedConvolution(d, d, kW, 1, 1, 1, (kW-1)/2+dil-1, 0, dil, 1)) -- batchSize x d x 1 x seqLen
+    end
+    block:add(nn.ReLU()) -- in theory, BN before
+    block:add(cudnn.SpatialConvolution(d, 2*d, 1, 1, 1, 1))
+    return block
+end
+
+-- this is like the stuff from the Dauphin, Fan, et al. paper
+local function make_gated_block(d, mask, kW, dil, use_tanh)
+    -- input assumed to be batchSize x d x 1 x seqLen
+    local block = nn.Sequential()
+    if mask then
+        assert(false)
+    else
+        block:add(nn.SpatialDilatedConvolution(d, 2*d, kW, 1, 1, 1, (kW-1)/2+dil-1, 0, dil, 1)) -- batchSize x 2d x 1 x seqLen
+    end
+
+    block:add(nn.ConcatTable()
+                :add(use_tanh and nn.Sequential():add(nn.Narrow(1, 1, d)):add(nn.Tanh()) or nn.Narrow(1, 1, d))
+                :add(nn.Sequential():add(nn.Narrow(1, d+1, d)):add(nn.Sigmoid())))
+         :add(nn.CMulTable()) -- batchSize x 2d x 1 x seqLen
+    return block
+end
+
+local function make_res_block(block)
+    local res = nn.Sequential()
+                    :add(nn.ConcatTable()
+                             :add(nn.Identity())
+                             :add(block))
+                    :add(nn.CAddTable())
+    return res
+end
+
+
 return {
   buildEncoder = buildEncoder,
   buildDecoder = buildDecoder,
