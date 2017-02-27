@@ -20,6 +20,7 @@ cmd:option('-save_model', '', [[Model filename (the model will be saved as
 cmd:option('-train_from', '', [[If training from a checkpoint then this is the path to the pretrained model.]])
 cmd:option('-continue', false, [[If training from a checkpoint, whether to continue the training in the same configuration or not.]])
 cmd:option('-just_eval', false, [[]])
+cmd:option('-just_gen', false, [[]])
 cmd:option('-verbose_eval', false, [[]])
 cmd:option('-scoresomethings', false, [[]])
 
@@ -98,7 +99,10 @@ cmd:option('-seed', 3435, [[Seed for random initialization]])
 cmd:option('-json_log', false, [[Outputs logs in JSON format.]])
 
 local opt = cmd:parse(arg)
-print(opt)
+
+if not opt.just_gen then
+    print(opt)
+end
 
 local function reseed()
   torch.manualSeed(opt.seed)
@@ -335,7 +339,10 @@ local function trainModel(model, trainData, validData, dataset, info)
         print('Start training...')
     end
 
-    if opt.just_eval then
+    if opt.just_gen then
+        onmt.train.Greedy.greedy_gen(model, validData, nil, g_tgtDict, 1000)
+        return
+    elseif opt.just_eval then
         validPpl = eval(model, criterion, validData)
         if not opt.json_log then
             print('Validation perplexity: ' .. validPpl)

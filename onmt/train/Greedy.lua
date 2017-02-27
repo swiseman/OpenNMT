@@ -76,6 +76,17 @@ local function convert_predtostring(ts, size, dict, probs, n)
    return stringx.join(' ', strtbl)
 end
 
+local function convert_and_shorten_string(ts, max_len, dict)
+   local strtbl = {}
+   for i = 1, max_len do
+       if ts[i] == onmt.Constants.EOS then
+           break
+       end
+       table.insert(strtbl, dict.idxToLabel[ts[i]])
+   end
+   return stringx.join(' ', strtbl)
+end
+
 local function greedy_eval(model, data, src_dict, targ_dict,
     start_print_batch, end_print_batch, verbose)
 
@@ -147,6 +158,29 @@ local function greedy_eval(model, data, src_dict, targ_dict,
 end
 
 
+local function greedy_gen(model, data, src_dict, targ_dict, max_len)
+
+  allEvaluate(model)
+
+  for i = 1, data:batchCount() do
+    local batch = onmt.utils.Cuda.convert(data:getBatch(i))
+    local aggEncStates, catCtx = allEncForward(model, batch)
+    model.decoder:resetLastStates()
+    batch.targetLength = max_len
+    local preds, probs = model.decoder:greedyFixedFwd(batch, aggEncStates, catCtx, probs)
+
+    for n = 1, batch.size do
+        local gen_targ_string = convert_and_shorten_string(preds:select(2, n)
+            :sub(2, max_len+1), max_len, targ_dict)
+        print(gen_targ_string)
+    end
+  end
+
+  allTraining(model)
+end
+
+
 return {
-    greedy_eval = greedy_eval
+    greedy_eval = greedy_eval,
+    greedy_gen = greedy_gen
 }
