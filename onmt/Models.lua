@@ -171,7 +171,8 @@ local function make_bytenet_relu_block(d, mask, kW, dil)
                     :add(cudnn.SpatialConvolution(2*d, d, 1, 1, 1, 1)) -- batchSize x d x 1 x seqLen
                     :add(nn.ReLU())
     if mask then
-        assert(false)
+        block:add(nn.SpatialDilatedConvolution(d, d, kW, 1, 1, 1, (kW-1)*dil, 0, dil, 1)) -- batchSize x d x 1 x seqLen+(kW-1)*dil
+        block:add(nn.Narrow(4, 1, -(kW-1)*dil - 1)) -- batchSize x d x 1 x seqLen
     else
         -- args: nInPlane, nOutPlane, kW, kH, dW, dH, padW, padH, dilationW, dilationH
         block:add(nn.SpatialDilatedConvolution(d, d, kW, 1, 1, 1, (kW-1)/2+dil-1, 0, dil, 1)) -- batchSize x d x 1 x seqLen
@@ -186,7 +187,8 @@ local function make_gated_block(d, mask, kW, dil, use_tanh)
     -- input assumed to be batchSize x d x 1 x seqLen
     local block = nn.Sequential()
     if mask then
-        assert(false)
+        block:add(nn.SpatialDilatedConvolution(d, 2*d, kW, 1, 1, 1, (kW-1)*dil, 0, dil, 1)) -- batchSize x 2d x 1 x seqLen+(kW-1)*dil
+        block:add(nn.Narrow(4, 1, -(kW-1)*dil - 1)) -- batchSize x 2d x 1 x seqLen
     else
         block:add(nn.SpatialDilatedConvolution(d, 2*d, kW, 1, 1, 1, (kW-1)/2+dil-1, 0, dil, 1)) -- batchSize x 2d x 1 x seqLen
     end
@@ -206,6 +208,8 @@ local function make_res_block(block)
                     :add(nn.CAddTable())
     return res
 end
+
+local function make_
 
 
 return {
