@@ -196,7 +196,7 @@ local function get_player_idxs(game, max_per_team)
     return home_players, vis_players
 end
 
-local function makeData(jsondat, srcDicts, tgtDicts)
+local function makeData(jsondat, srcDicts, tgtDicts, shuffle)
   -- i guess make an input sequence for every player and every team
   -- can add city as a timestep, but maybe just add it as a feature
 
@@ -328,16 +328,20 @@ local function makeData(jsondat, srcDicts, tgtDicts)
     end
   end
 
-  if opt.shuffle == 1 then
+  --if opt.shuffle == 1 then
+  if shuffle then
     print('... shuffling sentences')
     local perm = torch.randperm(#tgt)
+    --print(perm)
     sizes = onmt.utils.Table.reorder(sizes, perm, true)
     reorderData(perm)
   end
 
-  print('... sorting sentences by size')
-  local _, perm = torch.sort(vecToTensor(sizes))
-  reorderData(perm)
+  if shuffle then
+      print('... sorting sentences by size')
+      local _, perm = torch.sort(vecToTensor(sizes))
+      reorderData(perm)
+  end
 
   print('Prepared ' .. #tgt .. ' sentences (' .. ignored
           .. ' ignored due to source length > ' .. opt.src_seq_length
@@ -380,13 +384,13 @@ local function main()
   print('Preparing training data...')
   data.train = {}
   data.train.src, data.train.tgt = makeData(jsondat.train,
-                                            data.dicts.src, data.dicts.tgt)
+                                            data.dicts.src, data.dicts.tgt, true)
   print('')
 
   print('Preparing validation data...')
   data.valid = {}
   data.valid.src, data.valid.tgt = makeData(jsondat.valid,
-                                            data.dicts.src, data.dicts.tgt)
+                                            data.dicts.src, data.dicts.tgt, false)
   print('')
 
   if opt.src_vocab:len() == 0 then

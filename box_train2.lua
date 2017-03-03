@@ -446,7 +446,9 @@ local function main()
 
   -- Create the data loader class.
   if not opt.json_log then
-    print('Loading data from \'' .. opt.data .. '\'...')
+      if not opt.just_gen then
+          print('Loading data from \'' .. opt.data .. '\'...')
+      end
   end
 
   local dataset = torch.load(opt.data, 'binary', false)
@@ -459,10 +461,12 @@ local function main()
   g_nCols = 22 --20
   g_nFeatures = 4
 
-  print("USING HACKY GLOBALS!!!",
-    string.format("regRows: %d; specPadding: %d; nCols: %d; nFeats: %d",
-    g_nRegRows, g_specPadding, g_nCols, g_nFeatures))
-  print("")
+  if not opt.just_gen then
+      print("USING HACKY GLOBALS!!!",
+        string.format("regRows: %d; specPadding: %d; nCols: %d; nFeats: %d",
+        g_nRegRows, g_specPadding, g_nCols, g_nFeatures))
+      print("")
+  end
 
   local colStartIdx = dataset.dicts.src.words:size()+1 -- N.B. order is crucial
   for i = 1, g_nCols*2+2 do -- column names for reg and spec, plus home/away features
@@ -480,15 +484,17 @@ local function main()
   validData:setBatchSize(opt.max_batch_size)
 
   if not opt.json_log then
-    print(string.format(' * vocabulary size: source = %d; target = %d',
-                        dataset.dicts.src.words:size(), dataset.dicts.tgt.words:size()))
-    print(string.format(' * additional features: source = %d; target = %d',
-                        #dataset.dicts.src.features, #dataset.dicts.tgt.features))
-    print(string.format(' * maximum sequence length: source = %d; target = %d',
-                        trainData.maxSourceLength, trainData.maxTargetLength))
-    print("nSourceRows", trainData.nSourceRows)
-    print(string.format(' * number of training instances: %d', #trainData.tgt))
-    print(string.format(' * maximum batch size: %d', opt.max_batch_size))
+      if not opt.just_gen then
+        print(string.format(' * vocabulary size: source = %d; target = %d',
+                            dataset.dicts.src.words:size(), dataset.dicts.tgt.words:size()))
+        print(string.format(' * additional features: source = %d; target = %d',
+                            #dataset.dicts.src.features, #dataset.dicts.tgt.features))
+        print(string.format(' * maximum sequence length: source = %d; target = %d',
+                            trainData.maxSourceLength, trainData.maxTargetLength))
+        print("nSourceRows", trainData.nSourceRows)
+        print(string.format(' * number of training instances: %d', #trainData.tgt))
+        print(string.format(' * maximum batch size: %d', opt.max_batch_size))
+      end
   else
     local metadata = {
       options = opt,
@@ -511,7 +517,9 @@ local function main()
   end
 
   if not opt.json_log then
-    print('Building model...')
+      if not opt.just_gen then
+          print('Building model...')
+      end
   end
 
     local model = {}
