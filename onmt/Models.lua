@@ -161,7 +161,6 @@ local function loadDecoder(pretrained, clone)
   return onmt.Decoder.load(pretrained)
 end
 
--- adapted for torch resnet code
 
 local function make_bytenet_relu_block(d, mask, kW, dil)
     -- input assumed to be batchSize x 2d x 1 x seqLen; treating as an image
@@ -209,7 +208,17 @@ local function make_res_block(block)
     return res
 end
 
-local function make_
+local function embs_as_img_enc(lut)
+    -- maps batchSize x seqLen -> batchSize x dim x 1 x seqLen
+    local dim = lut.weight:size(2)
+    local enc = nn.Sequential()
+                  :add(lut) -- batchSize x seqLen x dim
+                  :add(nn.Transpose({2, 3})) -- batchSize x dim x seqLen
+                  :add(nn.Reshape(dim, 1, -1, true)) -- batchSize x dim x 1 x seqLen
+    return enc
+end
+
+local function
 
 
 return {
