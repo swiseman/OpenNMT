@@ -193,9 +193,9 @@ local function make_gated_block(d, mask, kW, dil, use_tanh)
     end
 
     block:add(nn.ConcatTable()
-                :add(use_tanh and nn.Sequential():add(nn.Narrow(1, 1, d)):add(nn.Tanh()) or nn.Narrow(1, 1, d))
-                :add(nn.Sequential():add(nn.Narrow(1, d+1, d)):add(nn.Sigmoid())))
-         :add(nn.CMulTable()) -- batchSize x 2d x 1 x seqLen
+                :add(use_tanh and nn.Sequential():add(nn.Narrow(2, 1, d)):add(nn.Tanh()) or nn.Narrow(2, 1, d))
+                :add(nn.Sequential():add(nn.Narrow(2, d+1, d)):add(nn.Sigmoid())))
+         :add(nn.CMulTable()) -- batchSize x d x 1 x seqLen
     return block
 end
 
@@ -218,8 +218,38 @@ local function embs_as_img_enc(lut)
     return enc
 end
 
-local function
+--------------------------------------------------------------------------------
 
+local function embs_and_neg_as_img_enc(lut)
+    -- maps batchSize x 2*seqLen -> batchSize x dim x 2 x seqLen.
+    -- note that seqLen is trueSeqLen+1, where true is padded before and false padded after
+    local dim = lut.weight:size(2)
+    local enc = nn.Sequential()
+                  :add(lut) -- batchSize x 2*seqLen x dim
+                  :add(nn.Reshape(2, -1, dim, true)) -- batchSize x 2 x seqLen x dim
+                  :add(nn.Transpose({2, 4}, {3, 4})) -- batchSize x dim x 2 x seqLen
+    return enc
+end
+
+local function make_neg_gated_block(d, mask, kW, dil, use_tanh)
+    -- input assumed to be batchSize x d x 2 x seqLen
+    local block
+      = nn.Sequential()
+          :add(nn.ConcatTable()
+                 :add(nn.Sequential()
+                        :add(nn.SpatialDilatedConvolution(d, 2*d, kW, 1, 1, 1, (kW-1)*dil, 0, dil, 1)) -- batchSize x 2d x 2 x seqLen+(kW-1)*dil
+                        :add(nn.Narrow(4, 1, -(kW-1)*dil - 1)) -- batchSize x 2d x 2 x seqLen
+                        :add(nn.Narrow(3, 1, 1))) -- batchSize x 2d x 1 x seqLen
+                 :add(nn.Sequential()
+                        :add(nn.SpatialDilatedConvolution(d, 2*d, kW-1, 2, 1, 1, (kW-1)*dil, 0, dil, 1)) -- batchSize x 2d x 1 x seqLen+(kW-1)*dil+1
+                        :add(nn.Narrow(4, dil+1, -(kW-1)*dil - 1)))) -- batchSize x 2d x 1 x seqLen
+          :add(nn.JoinTable(3)) -- batchSize x 2d x 2 x seqLen
+          :add(nn.ConcatTable()
+                 :add(use_tanh and nn.Sequential():add(nn.Narrow(2, 1, d)):add(nn.Tanh()) or nn.Narrow(2, 1, d))
+                 :add(nn.Sequential():add(nn.Narrow(2, d+1, d)):add(nn.Sigmoid())))
+         :add(nn.CMulTable()) -- batchSize x d x 2 x seqLen
+    return block
+end
 
 return {
   buildEncoder = buildEncoder,
