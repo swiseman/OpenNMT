@@ -80,10 +80,10 @@ function KMinDist:updateGradInput(input, target)
     end
 
     -- the diffs in gradInput now need to be distributed into gradTarget
-    print(self.argmins)
+    --print(self.argmins)
     newIdxs:sub(1, bsz):copy(self.range:sub(1, bsz))
     self.argmins:view(bsz, K):add(M, newIdxs:sub(1, bsz):view(bsz, 1):expand(bsz, K))
-    print(self.argmins)
+    --print(self.argmins)
     self.gradTarget:view(-1, dim):indexAdd(1, self.argmins:view(-1), self.gradInput:view(-1, dim))
     self.gradTarget:neg()
 

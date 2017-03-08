@@ -41,6 +41,7 @@ cmd:option('-poe', false, [[]])
 cmd:option('-recdist', 0, [[]])
 cmd:option('-nfilters', 200, [[]])
 cmd:option('-nrecpreds', 3, [[]])
+cmd:option('-rho', 0.5, [[]])
 
 cmd:option('-pool', 'mean', [[mean or max]])
 cmd:option('-enc_layers', 1, [[]])
@@ -314,14 +315,14 @@ local function trainModel(model, trainData, validData, dataset, info)
                 local ctxLen = catCtx:size(2)
 
                 local decOutputs = model.decoder:forward(batch, aggEncStates, catCtx)
-                local encGradStatesOut, gradContext, loss = model.decoder:backward(batch, decOutputs,
+                local encGradStatesOut, gradContext, loss, recloss = model.decoder:backward(batch, decOutputs,
                                                                            criterion, ctxLen, recCrit)
                 allEncBackward(model, batch, encGradStatesOut, gradContext)
 
                 -- Update the parameters.
                 optim:prepareGrad(gradParams, opt.max_grad_norm)
                 optim:updateParams(params, gradParams)
-                epochState:update(batch, loss)
+                epochState:update(batch, loss, recloss)
                 batch:nextPiece()
             end
 

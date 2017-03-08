@@ -133,7 +133,7 @@ local function buildDecoder(opt, dicts, verbose)
   if opt.copy_generate then
       if opt.recdist > 0 then
           return onmt.ConvRecDecoder.new(inputNetwork, rnn, generator, opt.input_feed == 1,
-                       opt.double_output, opt.nfilters, opt.nrecpreds)
+                       opt.double_output, opt.nfilters, opt.nrecpreds, opt.rho)
       else
           return onmt.Decoder2.new(inputNetwork, rnn, generator, opt.input_feed == 1, opt.double_output)
       end

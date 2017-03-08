@@ -28,13 +28,14 @@ Parameters:
   * `inputFeed` - bool, enable input feeding.
 --]]
 function ConvRecDecoder:__init(inputNetwork, rnn, generator, inputFeed,
-    doubleOutput, numFilters, numRecPreds)
+    doubleOutput, numFilters, numRecPreds, rho)
   self.rnn = rnn
   self.inputNet = inputNetwork
 
   self.args = {}
   self.args.rnnSize = self.rnn.outputSize
   self.args.numEffectiveLayers = self.rnn.numEffectiveLayers
+  self.args.rho = rho
 
   self.args.inputIndex = {}
   self.args.outputIndex = {}
@@ -424,10 +425,10 @@ function ConvRecDecoder:backward(batch, outputs, criterion, ctxLen, recCrit)
   if batch.targetLength >= 5 then
       self.recViewer:resetSize(batch.size, -1, self.args.rnnSize)
       local recpreds = self.rec:forward(outputs)
-      recloss = recCrit:forward(recpreds, context)
+      recloss = recCrit:forward(recpreds, context)*self.args.rho
       local recOutGradOut, recCtxGradOut = recCrit:backward(recpreds, context)
       -- add encoder grads
-      gradContextInput:add(1/batch.totalSize, recCtxGradOut)
+      gradContextInput:add(self.args.rho/batch.totalSize, recCtxGradOut)
       local recStepGradOuts = self.rec:backward(outputs, recOutGradOut)
   end
 
@@ -453,7 +454,7 @@ function ConvRecDecoder:backward(batch, outputs, criterion, ctxLen, recCrit)
     --gradStatesInput[#gradStatesInput]:add(decGradOut)
     gradStatesInput[#gradStatesInput]:add(decGradOut[1])
     if recStepGradOuts then
-        gradStatesInput[#gradStatesInput]:add(1/batch.totalSize, recStepGradOuts[t])
+        gradStatesInput[#gradStatesInput]:add(self.args.rho/batch.totalSize, recStepGradOuts[t])
     end
     gradContextInput:add(decGradOut[2])
     --if self.args.doubleOutput then

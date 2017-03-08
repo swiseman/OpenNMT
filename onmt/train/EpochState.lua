@@ -16,6 +16,7 @@ function EpochState:__init(epoch, numIterations, learningRate, lastValidPpl, sta
     self.status = {}
     self.status.trainNonzeros = 0
     self.status.trainLoss = 0
+    self.status.recLoss = 0
   end
 
   self.timer = torch.Timer()
@@ -26,10 +27,13 @@ function EpochState:__init(epoch, numIterations, learningRate, lastValidPpl, sta
 end
 
 --[[ Update training status. Takes `batch` (described in data.lua) and last loss.]]
-function EpochState:update(batch, loss)
+function EpochState:update(batch, loss, recloss)
   self.numWordsSource = self.numWordsSource + batch.size * batch.sourceLength
   self.numWordsTarget = self.numWordsTarget + batch.size * batch.targetLength
   self.status.trainLoss = self.status.trainLoss + loss
+  if recloss then
+      self.status.recLoss = self.status.recLoss + recloss
+  end
   self.status.trainNonzeros = self.status.trainNonzeros + batch.targetNonZeros
 end
 
@@ -66,6 +70,9 @@ function EpochState:log(batchIndex, json)
     stats = stats .. string.format('LR %.4f ; ', self.learningRate)
     stats = stats .. string.format('Target tokens/s %d ; ', self.numWordsTarget / timeTaken)
     stats = stats .. string.format('PPL %.2f', self:getTrainPpl())
+    if self.status.recLoss ~= 0 then
+        stats = stats .. string.format('RLoss %.3f', self.status.recLoss/self.status.trainNonzeros)
+    end
     print(stats)
   end
 end
