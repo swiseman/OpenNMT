@@ -170,7 +170,6 @@ function ConvRecDecoder:_buildReconstructor(numFilters, numPreds)
     local mod = nn.Sequential()
                  :add(nn.JoinTable(2)) -- batchSize x seqLen*dim
                  :add(self.recViewer) -- batchSize x seqLen x dim
-                 --:add(nn.Transpose({2, 3})) -- batchSize x dim x seqLen
                  :add(nn.ConcatTable()
                         :add(nn.Sequential()
                             -- maybe no pad, since unreliable?
@@ -400,7 +399,7 @@ Parameters:
   Note: This code runs both the standard backward and criterion forward/backward.
   It returns both the gradInputs and the loss.
   -- ]]
-function ConvRecDecoder:backward(batch, outputs, criterion, ctxLen)
+function ConvRecDecoder:backward(batch, outputs, criterion, ctxLen, recCrit)
   local laySizes = getProtoSizes(batch.size, self.args.rnnSize,
       self.args.numEffectiveLayers, self.args.doubleOutput, true)
   if self.gradOutputsProto == nil then
@@ -415,11 +414,19 @@ function ConvRecDecoder:backward(batch, outputs, criterion, ctxLen)
   local gradContextInput = onmt.utils.Tensor.reuseTensor(self.gradContextProto,
                                                          { batch.size, ctxLen, self.args.rnnSize })
 
-  self.recViewer:resetSize(batch.size, -1, self.args.rnnSize)
-
   local loss = 0
 
   local context = self.inputs[1][self.args.inputIndex.context]
+
+  -- rec loss and gradients
+  self.recViewer:resetSize(batch.size, -1, self.args.rnnSize)
+  local recpreds = self.rec:forward(outputs)
+  local recloss = recCrit:forward(recpreds, context)
+  local recGradOuts = recCrit:backward(recpreds, context)
+  -- add encoder grads
+  gradContextInput:add(1/batch.totalSize, recGradOuts[2])
+  local recStepGradOuts = self.rec:backward(outputs, recGradOuts[1])
+
 
   for t = batch.targetLength, 1, -1 do
     -- Compute decoder output gradients.
@@ -441,6 +448,7 @@ function ConvRecDecoder:backward(batch, outputs, criterion, ctxLen)
     local decGradOut = self.generator:backward(genInp, genGradOut)
     --gradStatesInput[#gradStatesInput]:add(decGradOut)
     gradStatesInput[#gradStatesInput]:add(decGradOut[1])
+    gradStatesInput[#gradStatesInput]:add(1/batch.totalSize, recStepGradOuts[t])
     gradContextInput:add(decGradOut[2])
     --if self.args.doubleOutput then
     gradStatesInput[self.args.numEffectiveLayers]:add(decGradOut[3])

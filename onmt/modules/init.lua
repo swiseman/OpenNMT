@@ -22,11 +22,12 @@ require('onmt.modules.Decoder2')
 require('onmt.modules.CopyGenerator')
 require('onmt.modules.CopyGenerator2')
 require('onmt.modules.MarginalNLLCriterion')
+require('onmt.modules.KMinDist')
 
-require('onmt.modules.CopyPOEGenerator')
 require('onmt.modules.CopyPOEGenerator')
 require('onmt.modules.CIndexAddTo')
 require('onmt.modules.MaxMask')
 require('onmt.modules.StupidMaxThing')
+
 
 return onmt

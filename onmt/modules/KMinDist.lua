@@ -1,4 +1,4 @@
---require 'nn'
+require 'nn'
 
 local KMinDist, parent = torch.class('nn.KMinDist', 'nn.Criterion')
 
@@ -37,7 +37,7 @@ function KMinDist:updateOutput(input, target)
     else -- p == 2
         diff:pow(2)
     end
-    sums:sum(diff, 4)
+    sums:sum(diff, 4) -- bsz x K x M
     -- if self.p == 2 then
     --     sums:sqrt()
     -- end
@@ -55,9 +55,13 @@ function KMinDist:updateOutput(input, target)
     return self.output
 end
 
+-- returns 2 things, to be compatible w/ usual criteria
 function KMinDist:updateGradInput(input, target)
     local bsz, dim, M, K = input:size(1), target:size(3), target:size(2), input:size(2)/target:size(3)
+    self.gradTarget = self.gradTarget or target.new()
     self.gradInput:resizeAs(input)
+    self.gradTarget:resizeAs(target):zero()
+
     self.diff:resize(bsz, K, M, dim)
     local diff = self.diff
     -- could really save this from fwd pass if we double the memory
@@ -75,44 +79,58 @@ function KMinDist:updateGradInput(input, target)
         self.gradInput:sign()
     end
 
+    -- the diffs in gradInput now need to be distributed into gradTarget
+    print(self.argmins)
+    newIdxs:sub(1, bsz):copy(self.range:sub(1, bsz))
+    self.argmins:view(bsz, K):add(M, newIdxs:sub(1, bsz):view(bsz, 1):expand(bsz, K))
+    print(self.argmins)
+    self.gradTarget:view(-1, dim):indexAdd(1, self.argmins:view(-1), self.gradInput:view(-1, dim))
+    self.gradTarget:neg()
+
     if self.sizeAverage then
         self.gradInput:div(bsz)
+        self.gradTarget:div(bsz)
     end
 
-    return self.gradInput
+    return self.gradInput, self.gradTarget
 
 end
 
 
--- torch.manualSeed(2)
--- local M = 5
--- local dim = 5
--- local K = 3
+torch.manualSeed(2)
+local M = 5
+local dim = 5
+local K = 3
 -- local mlp = nn.Sequential()
 --          :add(nn.Linear(4, K*dim))
---
--- --crit = nn.KMinDist(2)
--- crit = nn.KMinDist(1)
---
--- X = torch.randn(2, 4)
---
--- Y = torch.randn(2, M, dim)
---
---
+
+crit = nn.KMinDist(2)
+--crit = nn.KMinDist(1)
+
+X = torch.randn(2, K*dim)
+
+Y = torch.randn(2, M, dim)
+
+
 -- mlp:zeroGradParameters()
 -- mlp:forward(X)
 -- print("loss", crit:forward(mlp.output, Y))
 -- local gradOut = crit:backward(mlp.output, Y)
 -- print("gradOut", gradOut)
 -- mlp:backward(X, gradOut)
---
--- local eps = 1e-5
---
+
+crit:forward(X, Y)
+gradIn, gradTarg = crit:backward(X, Y)
+gradIn = gradIn:clone()
+gradTarg = gradTarg:clone()
+
+local eps = 1e-5
+
 -- local function getLoss()
 --     mlp:forward(X)
 --     return crit:forward(mlp.output, Y)
 -- end
---
+
 -- local W = mlp:get(1).weight
 -- for i = 1, W:size(1) do
 --     for j = 1, W:size(2) do
@@ -126,3 +144,37 @@ end
 --     end
 --     print("")
 -- end
+
+local function getLoss()
+    return crit:forward(X, Y)
+end
+
+print("X")
+for i = 1, X:size(1) do
+    for j = 1, X:size(2) do
+        X[i][j] = X[i][j] + eps
+        local rloss = getLoss()
+        X[i][j] = X[i][j] - 2*eps
+        local lloss = getLoss()
+        local fd = (rloss - lloss)/(2*eps)
+        print(gradIn[i][j], fd)
+        X[i][j] = X[i][j] + eps
+    end
+    print("")
+end
+
+print("")
+print("Y")
+rY = Y:view(-1, dim)
+for i = 1, rY:size(1) do
+    for j = 1, rY:size(2) do
+        rY[i][j] = rY[i][j] + eps
+        local rloss = getLoss()
+        rY[i][j] = rY[i][j] - 2*eps
+        local lloss = getLoss()
+        local fd = (rloss - lloss)/(2*eps)
+        print(gradTarg:view(-1, dim)[i][j], fd)
+        rY[i][j] = rY[i][j] + eps
+    end
+    print("")
+end
