@@ -131,7 +131,12 @@ local function buildDecoder(opt, dicts, verbose)
   local rnn = onmt.LSTM.new(opt.layers, inputSize, opt.rnn_size, opt.dropout, opt.residual, opt.double_output)
 
   if opt.copy_generate then
-    return onmt.Decoder2.new(inputNetwork, rnn, generator, opt.input_feed == 1, opt.double_output)
+      if opt.recdist > 0 then
+          return onmt.ConvRecDecoder.new(inputNetwork, rnn, generator, opt.input_feed == 1,
+                       opt.double_output, opt.nfilters, opt.nrecpreds)
+      else
+          return onmt.Decoder2.new(inputNetwork, rnn, generator, opt.input_feed == 1, opt.double_output)
+      end
   else
     return onmt.Decoder.new(inputNetwork, rnn, generator, opt.input_feed == 1,
       opt.copy_generate, opt.tanh_query)

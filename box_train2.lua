@@ -38,7 +38,9 @@ cmd:option('-just_lm', false, [[No conditioning]])
 cmd:option('-copy_generate', false, [[]])
 cmd:option('-tanh_query', false, [[]])
 cmd:option('-poe', false, [[]])
-
+cmd:option('-recdist', 0, [[]])
+cmd:option('-nfilters', 200, [[]])
+cmd:option('-nrecpreds', 3, [[]])
 
 cmd:option('-pool', 'mean', [[mean or max]])
 cmd:option('-enc_layers', 1, [[]])
@@ -254,6 +256,10 @@ local function trainModel(model, trainData, validData, dataset, info)
     -- define criterion of each GPU
     criterion = onmt.utils.Cuda.convert(buildCriterion(dataset.dicts.tgt.words:size(),
                                                           dataset.dicts.tgt.features))
+    local recCrit
+    if opt.recdist > 0 then
+        recCrit = onmt.utils.Cuda.convert(nn.KMinDist(opt.recdist))
+    end
 
     -- optimize memory of the first clone
     if not opt.disable_mem_optimization then
@@ -308,7 +314,8 @@ local function trainModel(model, trainData, validData, dataset, info)
                 local ctxLen = catCtx:size(2)
 
                 local decOutputs = model.decoder:forward(batch, aggEncStates, catCtx)
-                local encGradStatesOut, gradContext, loss = model.decoder:backward(batch, decOutputs, criterion, ctxLen)
+                local encGradStatesOut, gradContext, loss = model.decoder:backward(batch, decOutputs,
+                                                                           criterion, ctxLen, recCrit)
                 allEncBackward(model, batch, encGradStatesOut, gradContext)
 
                 -- Update the parameters.

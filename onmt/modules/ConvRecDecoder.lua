@@ -422,10 +422,10 @@ function ConvRecDecoder:backward(batch, outputs, criterion, ctxLen, recCrit)
   self.recViewer:resetSize(batch.size, -1, self.args.rnnSize)
   local recpreds = self.rec:forward(outputs)
   local recloss = recCrit:forward(recpreds, context)
-  local recGradOuts = recCrit:backward(recpreds, context)
+  local recOutGradOut, recCtxGradOut = recCrit:backward(recpreds, context)
   -- add encoder grads
-  gradContextInput:add(1/batch.totalSize, recGradOuts[2])
-  local recStepGradOuts = self.rec:backward(outputs, recGradOuts[1])
+  gradContextInput:add(1/batch.totalSize, recCtxGradOut)
+  local recStepGradOuts = self.rec:backward(outputs, recOutGradOut)
 
 
   for t = batch.targetLength, 1, -1 do

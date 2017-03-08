@@ -97,84 +97,57 @@ function KMinDist:updateGradInput(input, target)
 end
 
 
-torch.manualSeed(2)
-local M = 5
-local dim = 5
-local K = 3
--- local mlp = nn.Sequential()
---          :add(nn.Linear(4, K*dim))
-
-crit = nn.KMinDist(2)
---crit = nn.KMinDist(1)
-
-X = torch.randn(2, K*dim)
-
-Y = torch.randn(2, M, dim)
-
-
--- mlp:zeroGradParameters()
--- mlp:forward(X)
--- print("loss", crit:forward(mlp.output, Y))
--- local gradOut = crit:backward(mlp.output, Y)
--- print("gradOut", gradOut)
--- mlp:backward(X, gradOut)
-
-crit:forward(X, Y)
-gradIn, gradTarg = crit:backward(X, Y)
-gradIn = gradIn:clone()
-gradTarg = gradTarg:clone()
-
-local eps = 1e-5
-
+-- torch.manualSeed(2)
+-- local M = 5
+-- local dim = 5
+-- local K = 3
+--
+-- crit = nn.KMinDist(2)
+-- --crit = nn.KMinDist(1)
+--
+-- X = torch.randn(2, K*dim)
+--
+-- Y = torch.randn(2, M, dim)
+--
+--
+-- crit:forward(X, Y)
+-- gradIn, gradTarg = crit:backward(X, Y)
+-- gradIn = gradIn:clone()
+-- gradTarg = gradTarg:clone()
+--
+-- local eps = 1e-5
+--
+--
 -- local function getLoss()
---     mlp:forward(X)
---     return crit:forward(mlp.output, Y)
+--     return crit:forward(X, Y)
 -- end
-
--- local W = mlp:get(1).weight
--- for i = 1, W:size(1) do
---     for j = 1, W:size(2) do
---         W[i][j] = W[i][j] + eps
+--
+-- print("X")
+-- for i = 1, X:size(1) do
+--     for j = 1, X:size(2) do
+--         X[i][j] = X[i][j] + eps
 --         local rloss = getLoss()
---         W[i][j] = W[i][j] - 2*eps
+--         X[i][j] = X[i][j] - 2*eps
 --         local lloss = getLoss()
 --         local fd = (rloss - lloss)/(2*eps)
---         print(mlp:get(1).gradWeight[i][j], fd)
---         W[i][j] = W[i][j] + eps
+--         print(gradIn[i][j], fd)
+--         X[i][j] = X[i][j] + eps
 --     end
 --     print("")
 -- end
-
-local function getLoss()
-    return crit:forward(X, Y)
-end
-
-print("X")
-for i = 1, X:size(1) do
-    for j = 1, X:size(2) do
-        X[i][j] = X[i][j] + eps
-        local rloss = getLoss()
-        X[i][j] = X[i][j] - 2*eps
-        local lloss = getLoss()
-        local fd = (rloss - lloss)/(2*eps)
-        print(gradIn[i][j], fd)
-        X[i][j] = X[i][j] + eps
-    end
-    print("")
-end
-
-print("")
-print("Y")
-rY = Y:view(-1, dim)
-for i = 1, rY:size(1) do
-    for j = 1, rY:size(2) do
-        rY[i][j] = rY[i][j] + eps
-        local rloss = getLoss()
-        rY[i][j] = rY[i][j] - 2*eps
-        local lloss = getLoss()
-        local fd = (rloss - lloss)/(2*eps)
-        print(gradTarg:view(-1, dim)[i][j], fd)
-        rY[i][j] = rY[i][j] + eps
-    end
-    print("")
-end
+--
+-- print("")
+-- print("Y")
+-- rY = Y:view(-1, dim)
+-- for i = 1, rY:size(1) do
+--     for j = 1, rY:size(2) do
+--         rY[i][j] = rY[i][j] + eps
+--         local rloss = getLoss()
+--         rY[i][j] = rY[i][j] - 2*eps
+--         local lloss = getLoss()
+--         local fd = (rloss - lloss)/(2*eps)
+--         print(gradTarg:view(-1, dim)[i][j], fd)
+--         rY[i][j] = rY[i][j] + eps
+--     end
+--     print("")
+-- end
