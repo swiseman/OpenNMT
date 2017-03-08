@@ -1,3 +1,4 @@
+require 'cudnn'
 --[[ Unit to decode a sequence of output tokens.
 
      .      .      .             .
@@ -166,7 +167,7 @@ function ConvRecDecoder:_buildModel()
 end
 
 function ConvRecDecoder:_buildReconstructor(numFilters, numPreds)
-    self.recViewer = nn.View(-1, -1, self.args.rnnSize)
+    self.recViewer = nn.View(1, -1, self.args.rnnSize)
     local mod = nn.Sequential()
                  :add(nn.JoinTable(2)) -- batchSize x seqLen*dim
                  :add(self.recViewer) -- batchSize x seqLen x dim
@@ -419,13 +420,16 @@ function ConvRecDecoder:backward(batch, outputs, criterion, ctxLen, recCrit)
   local context = self.inputs[1][self.args.inputIndex.context]
 
   -- rec loss and gradients
-  self.recViewer:resetSize(batch.size, -1, self.args.rnnSize)
-  local recpreds = self.rec:forward(outputs)
-  local recloss = recCrit:forward(recpreds, context)
-  local recOutGradOut, recCtxGradOut = recCrit:backward(recpreds, context)
-  -- add encoder grads
-  gradContextInput:add(1/batch.totalSize, recCtxGradOut)
-  local recStepGradOuts = self.rec:backward(outputs, recOutGradOut)
+  local recloss = 0
+  if batch.targetLength >= 5 then
+      self.recViewer:resetSize(batch.size, -1, self.args.rnnSize)
+      local recpreds = self.rec:forward(outputs)
+      recloss = recCrit:forward(recpreds, context)
+      local recOutGradOut, recCtxGradOut = recCrit:backward(recpreds, context)
+      -- add encoder grads
+      gradContextInput:add(1/batch.totalSize, recCtxGradOut)
+      local recStepGradOuts = self.rec:backward(outputs, recOutGradOut)
+  end
 
 
   for t = batch.targetLength, 1, -1 do
@@ -448,7 +452,9 @@ function ConvRecDecoder:backward(batch, outputs, criterion, ctxLen, recCrit)
     local decGradOut = self.generator:backward(genInp, genGradOut)
     --gradStatesInput[#gradStatesInput]:add(decGradOut)
     gradStatesInput[#gradStatesInput]:add(decGradOut[1])
-    gradStatesInput[#gradStatesInput]:add(1/batch.totalSize, recStepGradOuts[t])
+    if recStepGradOuts then
+        gradStatesInput[#gradStatesInput]:add(1/batch.totalSize, recStepGradOuts[t])
+    end
     gradContextInput:add(decGradOut[2])
     --if self.args.doubleOutput then
     gradStatesInput[self.args.numEffectiveLayers]:add(decGradOut[3])
@@ -490,7 +496,7 @@ function ConvRecDecoder:backward(batch, outputs, criterion, ctxLen, recCrit)
           gradStatesInput[i]:zero()
       end
   end
-  return gradStatesInput, gradContextInput, loss
+  return gradStatesInput, gradContextInput, loss, recloss
 end
 
 --[[ Compute the loss on a batch.
