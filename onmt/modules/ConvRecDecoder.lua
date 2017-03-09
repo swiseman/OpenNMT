@@ -167,7 +167,7 @@ function ConvRecDecoder:_buildModel()
   return nn.gModule(inputs, outputs)
 end
 
-function ConvRecDecoder:_buildReconstructor(numFilters, numPreds)
+function ConvRecDecoder:_buildReconstructor(numFilters, numPreds, nDiscFeatures)
     self.recViewer = nn.View(1, -1, self.args.rnnSize)
     local mod = nn.Sequential()
                  :add(nn.JoinTable(2)) -- batchSize x seqLen*dim
@@ -184,8 +184,36 @@ function ConvRecDecoder:_buildReconstructor(numFilters, numPreds)
              		        :add(nn.ReLU())
              		        :add(nn.Max(2))))
                  :add(nn.JoinTable(2)) -- batchSize x 2*numFilters
-                 -- maybe want some mlp stuff here?
-                 :add(nn.Linear(2*numFilters, self.args.rnnSize*numPreds)) -- batchSize x numPreds*rnnSize
+
+    local nWindowFeats = 2*numFilters
+
+    if not nDiscFeatures then
+        -- maybe want some mlp stuff first?
+        mod:add(nn.Linear(nWindowFeats, self.args.rnnSize*numPreds)) -- batchSize x numPreds*rnnSize
+    else
+        mod:add(nn.Linear(nWindowFeats, srcEmbSize*numPreds))
+        mod:add(nn.ReLU())
+        mod:add(nn.View(-1, numPreds, srcEmbSize)) -- batchSize x numPreds x srcEmbSize
+
+        assert(not partitionFeats or srcEmbSize % nDiscFeatures == 0)
+        local featEmbDim = partitionFeats and srcEmbSize/nDiscFeatures or srcEmbSize
+
+        local cat = nn.ConcatTable()
+        for i = 1, nDiscFeatures do
+            local featPredictor = nn.Sequential()
+
+            if partitionFeats then
+                assert(srcEmbSize % nDiscFeatures == 0)
+                featPredictor:add(nn.Narrow(2, (i-1)*featEmbDim+1, featEmbDim))
+            end
+
+            featPredictor:add(nn.Bottle(nn.Linear(featEmbDim, outVocabSize[i]))):add(nn.LogSoftMax())
+            cat:add(featPredictor)
+        end
+        mod:add(cat) -- nDiscFeatures length table of batchSize x numPreds x outVocabSize tensors
+        mod:add(nn.JoinTable(3)) -- batchSize x numPreds x sum[outVocabSizes]
+    end
+
     return mod
 end
 

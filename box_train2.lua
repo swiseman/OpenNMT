@@ -260,6 +260,7 @@ local function trainModel(model, trainData, validData, dataset, info)
     local recCrit
     if opt.recdist > 0 then
         recCrit = onmt.utils.Cuda.convert(nn.KMinDist(opt.recdist))
+        recCrit.sizeAverage = false
     end
 
     -- optimize memory of the first clone

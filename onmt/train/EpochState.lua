@@ -69,7 +69,7 @@ function EpochState:log(batchIndex, json)
     stats = stats .. string.format('Iter %d/%d ; ', batchIndex, self.numIterations)
     stats = stats .. string.format('LR %.4f ; ', self.learningRate)
     stats = stats .. string.format('Target tokens/s %d ; ', self.numWordsTarget / timeTaken)
-    stats = stats .. string.format('PPL %.2f', self:getTrainPpl())
+    stats = stats .. string.format('PPL %.2f ; ', self:getTrainPpl())
     if self.status.recLoss ~= 0 then
         stats = stats .. string.format('RLoss %.3f', self.status.recLoss/self.status.trainNonzeros)
     end
