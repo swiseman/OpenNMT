@@ -207,7 +207,9 @@ function ConvRecDecoder:_buildReconstructor(numFilters, numPreds, nDiscFeatures)
                 featPredictor:add(nn.Narrow(2, (i-1)*featEmbDim+1, featEmbDim))
             end
 
-            featPredictor:add(nn.Bottle(nn.Linear(featEmbDim, outVocabSize[i]))):add(nn.LogSoftMax())
+            featPredictor:add(nn.Bottle( nn.Sequential()
+                                           :add(nn.Linear(featEmbDim, outVocabSize[i]))
+                                           :add(nn.LogSoftMax()) ))
             cat:add(featPredictor)
         end
         mod:add(cat) -- nDiscFeatures length table of batchSize x numPreds x outVocabSize tensors

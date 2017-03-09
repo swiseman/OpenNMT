@@ -14,7 +14,7 @@ function KMinDist:__init(p, maxBatchSize, maxK)
 end
 
 -- input is batchsize x K*dim; target is batchsize x M x dim
--- \sum_k min_m dist(input_k, target_m)
+-- loss: \sum_k min_m dist(input_k, target_m)
 function KMinDist:updateOutput(input, target)
     local bsz, dim, M, K = input:size(1), target:size(3), target:size(2), input:size(2)/target:size(3)
     self.diff = self.diff or input.new()
