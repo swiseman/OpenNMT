@@ -113,7 +113,7 @@ function BoxDataset2:getBatch(idx)
 
   local bb = onmt.data.BoxBatch3.new(srcs, srcFeatures, tgt, tgtFeatures,
         self.maxSourceLength, self.colStartIdx, self.nFeatures,
-        self.copyGenerate, triples, self.tripV)
+        triples, self.tripV)
   return bb
 end
 

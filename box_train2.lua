@@ -493,7 +493,7 @@ local function main()
 
   local tripV   -- vocabulary for each element in a triple (for rec)
   if opt.discrec then
-      tripV = {#dataset.dicts.src.rows, #dataset.dicts.src.cols, #dataset.dicts.src.cells}
+      tripV = {dataset.dicts.src.rows:size(), dataset.dicts.src.cols:size(), dataset.dicts.src.cells:size()}
       print("tripV:", tripV)
   end
 

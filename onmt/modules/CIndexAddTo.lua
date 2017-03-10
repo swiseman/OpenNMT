@@ -6,7 +6,7 @@ function CIndexAddTo:__init(ip, maxbatchsize, maxcols)
     self.gradInput = {}
     self.maxbatchsize = maxbatchsize or 64
     self.maxcols = maxcols or 1000
-    self.range = torch.range(0, 63)
+    self.range = torch.range(0, self.maxbatchsize-1)
     self.cols = torch.Tensor(self.maxcols)
     self.outerprod = torch.Tensor()
 end
@@ -14,12 +14,12 @@ end
 function CIndexAddTo:updateOutput(input) -- expects input to be 3 things
     local dst, src, idxs = input[1], input[2], input[3]
 
-    if torch.type(dst) == 'torch.CudaTensor' and torch.type(self.range) ~= 'torch.CudaTensor' then
-        local range = torch.CudaTensor():resize(self.range:size(1)):copy(self.range)
-        self.range = range
-        self.cols = self.cols:cuda()
-        self.outerprod = self.outerprod:cuda()
-    end
+    -- if torch.type(dst) == 'torch.CudaTensor' and torch.type(self.range) ~= 'torch.CudaTensor' then
+    --     local range = torch.CudaTensor():resize(self.range:size(1)):copy(self.range)
+    --     self.range = range
+    --     self.cols = self.cols:cuda()
+    --     self.outerprod = self.outerprod:cuda()
+    -- end
 
     -- number of examples, number of idxs per example, and width of dst
     local N, K, V = src:size(1), src:size(2), dst:size(2)
@@ -32,7 +32,13 @@ function CIndexAddTo:updateOutput(input) -- expects input to be 3 things
     if torch.type(idxs) == 'torch.LongTensor' then
         newidxs = newidxs:long()
     end
-    newidxs:add(idxs)
+
+    self.opcopy = self.opcopy or idxs.new() -- in case idxs are CudaLongTensors    
+    self.opcopy:resize(newidxs:size(1), newidxs:size(2))
+    self.opcopy:copy(newidxs):add(idxs)
+    newidxs = self.opcopy
+
+    --newidxs:add(idxs)
     --newidxs = newidxs:long()
     self.newidxs = newidxs
 

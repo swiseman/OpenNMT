@@ -215,6 +215,10 @@ function BoxBatch3:getCellsForExample(b)
       :sub((b-1)*self.totalSourceLength+1, b*self.totalSourceLength):select(2,1)
 end
 
+function BoxBatch3:getSourceTriples()
+    return self.triples
+end
+
 --[[ Get target input batch at timestep `t`. --]]
 function BoxBatch3:getTargetInput(t)
   -- If a regular input, return word id, otherwise a table with features.

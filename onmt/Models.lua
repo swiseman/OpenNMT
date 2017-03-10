@@ -108,7 +108,6 @@ end
 local function buildRec(opt, tripV)
 
     local nDiscFeatures = 3 -- triples
-    assert(false) -- need to hand this to decoder
     local recViewer = nn.View(1, -1, opt.rnn_size)
     local mod = nn.Sequential()
                  :add(nn.JoinTable(2)) -- batchSize x seqLen*dim
@@ -149,7 +148,7 @@ local function buildRec(opt, tripV)
             end
 
             featPredictor:add(nn.Bottle( nn.Sequential()
-                                           :add(nn.Linear(featEmbDim, outVocabSize[i]))
+                                           :add(nn.Linear(featEmbDim, tripV[i]))
                                            :add(nn.LogSoftMax()) ))
             cat:add(featPredictor)
         end
@@ -191,7 +190,7 @@ local function buildDecoder(opt, dicts, verbose, tripV)
       if opt.discrec or opt.recdist > 0 then
           local rec, recViewer = buildRec(opt, tripV)
           return onmt.ConvRecDecoder.new(inputNetwork, rnn, generator, opt.input_feed == 1,
-                       opt.double_output, rec, recViewer, opt.rho)
+                       opt.double_output, rec, recViewer, opt.rho, opt.discrec)
       else
           return onmt.Decoder2.new(inputNetwork, rnn, generator, opt.input_feed == 1, opt.double_output)
       end
