@@ -546,7 +546,7 @@ local function main()
 
     local verbose = true
     -- make decoder first
-    model.decoder = onmt.Models.buildDecoder(opt, dataset.dicts.tgt, verbose)
+    model.decoder = onmt.Models.buildDecoder(opt, dataset.dicts.tgt, verbose, tripV)
     -- send to gpu immediately to make cloning things simpler
     onmt.utils.Cuda.convert(model.decoder)
     model.encoder = onmt.BoxTableEncoder({
