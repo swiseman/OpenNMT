@@ -39,6 +39,8 @@ cmd:option('-copy_generate', false, [[]])
 cmd:option('-tanh_query', false, [[]])
 cmd:option('-poe', false, [[]])
 cmd:option('-recdist', 0, [[]])
+cmd:option('-recembsize', 300, [[]])
+cmd:option('-discrec', false, [[]])
 cmd:option('-nfilters', 200, [[]])
 cmd:option('-nrecpreds', 3, [[]])
 cmd:option('-rho', 0.5, [[]])
@@ -258,7 +260,10 @@ local function trainModel(model, trainData, validData, dataset, info)
     criterion = onmt.utils.Cuda.convert(buildCriterion(dataset.dicts.tgt.words:size(),
                                                           dataset.dicts.tgt.features))
     local recCrit
-    if opt.recdist > 0 then
+    if opt.discrec then
+        recCrit = onmt.utils.Cuda.convert(nn.KMinXent())
+        recCrit.sizeAverage = false
+    elseif opt.recdist > 0 then
         recCrit = onmt.utils.Cuda.convert(nn.KMinDist(opt.recdist))
         recCrit.sizeAverage = false
     end
@@ -486,8 +491,14 @@ local function main()
 
   g_tgtDict = dataset.dicts.tgt.words
 
-  local trainData = onmt.data.BoxDataset2.new(dataset.train.src, dataset.train.tgt, colStartIdx, g_nFeatures, opt.copy_generate)
-  local validData = onmt.data.BoxDataset2.new(dataset.valid.src, dataset.valid.tgt, colStartIdx, g_nFeatures, opt.copy_generate)
+  local tripV   -- vocabulary for each element in a triple (for rec)
+  if opt.discrec then
+      tripV = {#dataset.dicts.src.rows, #dataset.dicts.src.cols, #dataset.dicts.src.cells}
+      print("tripV:", tripV)
+  end
+
+  local trainData = onmt.data.BoxDataset2.new(dataset.train.src, dataset.train.tgt, colStartIdx, g_nFeatures, opt.copy_generate, nil, tripV)
+  local validData = onmt.data.BoxDataset2.new(dataset.valid.src, dataset.valid.tgt, colStartIdx, g_nFeatures, opt.copy_generate, nil, tripV)
 
   trainData:setBatchSize(opt.max_batch_size)
   validData:setBatchSize(opt.max_batch_size)

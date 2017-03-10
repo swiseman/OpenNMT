@@ -23,6 +23,7 @@ require('onmt.modules.CopyGenerator')
 require('onmt.modules.CopyGenerator2')
 require('onmt.modules.MarginalNLLCriterion')
 require('onmt.modules.KMinDist')
+require('onmt.modules.KMinXent')
 require('onmt.modules.ConvRecDecoder')
 
 --require('onmt.modules.CopyPOEGenerator')

@@ -1,3 +1,4 @@
+-- I THINK this is for ignore datasets
 --[[ Data management and batch creation. Handles data created by `preprocess.lua`. ]]
 local BoxDataset2 = torch.class("BoxDataset2")
 
@@ -5,10 +6,12 @@ local BoxDataset2 = torch.class("BoxDataset2")
   and `tgtData`.
 --]]
 function BoxDataset2:__init(srcData, tgtData, colStartIdx, nFeatures,
-      copyGenerate, version)
+      copyGenerate, version, tripV)
 
   self.srcs = srcData.words
   self.srcFeatures = srcData.features
+  self.srcTriples = srcData.triples
+  self.tripV = tripV
 
   if tgtData ~= nil then
     self.tgt = tgtData.words
@@ -84,6 +87,7 @@ function BoxDataset2:getBatch(idx)
   local srcs = {}
   for j = 1, #self.srcs do srcs[j] = {} end
   local tgt = {}
+  local triples = {}
 
   local srcFeatures = {}
   local tgtFeatures = {}
@@ -93,6 +97,10 @@ function BoxDataset2:getBatch(idx)
         table.insert(srcs[j], self.srcs[j][i])
     end
     table.insert(tgt, self.tgt[i])
+
+    if self.srcTriples then
+        table.insert(triples, self.srcTriples[i]:long())
+    end
 
     if self.srcFeatures[i] then
       table.insert(srcFeatures, self.srcFeatures[i])
@@ -104,7 +112,8 @@ function BoxDataset2:getBatch(idx)
   end
 
   local bb = onmt.data.BoxBatch3.new(srcs, srcFeatures, tgt, tgtFeatures,
-        self.maxSourceLength, self.colStartIdx, self.nFeatures, self.copyGenerate)
+        self.maxSourceLength, self.colStartIdx, self.nFeatures,
+        self.copyGenerate, triples, self.tripV)
   return bb
 end
 

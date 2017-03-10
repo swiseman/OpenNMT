@@ -104,7 +104,64 @@ local function buildEncoder(opt, dicts, nRows, nCols)
   end
 end
 
-local function buildDecoder(opt, dicts, verbose)
+
+local function buildRec(opt, tripV)
+
+    local nDiscFeatures = 3 -- triples
+    assert(false) -- need to hand this to decoder
+    local recViewer = nn.View(1, -1, opt.rnn_size)
+    local mod = nn.Sequential()
+                 :add(nn.JoinTable(2)) -- batchSize x seqLen*dim
+                 :add(recViewer) -- batchSize x seqLen x dim
+                 :add(nn.ConcatTable()
+                        :add(nn.Sequential()
+                            -- maybe no pad, since unreliable?
+             	            :add(cudnn.TemporalConvolution(opt.rnn_size, opt.nfilters, 3, 1, 0))
+             		        :add(nn.ReLU())
+             		        :add(nn.Max(2)))
+             	         :add(nn.Sequential()
+                            -- maybe no pad, since unreliable?
+             	            :add(cudnn.TemporalConvolution(opt.rnn_size, opt.nfilters, 5, 1, 0))
+             		        :add(nn.ReLU())
+             		        :add(nn.Max(2))))
+                 :add(nn.JoinTable(2)) -- batchSize x 2*numFilters
+
+    local nWindowFeats = 2*opt.nfilters
+
+    if not opt.discrec then
+        -- maybe want some mlp stuff first?
+        mod:add(nn.Linear(nWindowFeats, opt.rnn_size*opt.nrecpreds)) -- batchSize x numPreds*rnnSize
+    else
+        mod:add(nn.Linear(nWindowFeats, opt.recembsize*opt.nrecpreds))
+        mod:add(nn.ReLU())
+        mod:add(nn.View(-1, opt.nrecpreds, opt.recembsize)) -- batchSize x numPreds x srcEmbSize
+
+        assert(not partitionFeats or opt.recembsize % nDiscFeatures == 0)
+        local featEmbDim = partitionFeats and opt.recembsize/nDiscFeatures or opt.recembsize
+
+        local cat = nn.ConcatTable()
+        for i = 1, nDiscFeatures do
+            local featPredictor = nn.Sequential()
+
+            if partitionFeats then
+                assert(opt.recembsize % nDiscFeatures == 0)
+                featPredictor:add(nn.Narrow(2, (i-1)*featEmbDim+1, featEmbDim))
+            end
+
+            featPredictor:add(nn.Bottle( nn.Sequential()
+                                           :add(nn.Linear(featEmbDim, outVocabSize[i]))
+                                           :add(nn.LogSoftMax()) ))
+            cat:add(featPredictor)
+        end
+        mod:add(cat) -- nDiscFeatures length table of batchSize x numPreds x outVocabSize tensors
+        mod:add(nn.JoinTable(3)) -- batchSize x numPreds x sum[outVocabSizes]
+    end
+
+    return mod, recViewer
+end
+
+
+local function buildDecoder(opt, dicts, verbose, tripV)
   local inputNetwork, inputSize = buildInputNetwork(opt, dicts, opt.pre_word_vecs_dec, opt.fix_word_vecs_dec)
 
   local generator
@@ -131,9 +188,10 @@ local function buildDecoder(opt, dicts, verbose)
   local rnn = onmt.LSTM.new(opt.layers, inputSize, opt.rnn_size, opt.dropout, opt.residual, opt.double_output)
 
   if opt.copy_generate then
-      if opt.recdist > 0 then
+      if opt.discrec or opt.recdist > 0 then
+          local rec, recViewer = buildRec(opt, tripV)
           return onmt.ConvRecDecoder.new(inputNetwork, rnn, generator, opt.input_feed == 1,
-                       opt.double_output, opt.nfilters, opt.nrecpreds, opt.rho)
+                       opt.double_output, rec, recViewer, opt.rho)
       else
           return onmt.Decoder2.new(inputNetwork, rnn, generator, opt.input_feed == 1, opt.double_output)
       end

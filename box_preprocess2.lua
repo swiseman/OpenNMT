@@ -47,15 +47,27 @@ local bs_keys = {"PLAYER_NAME", "START_POSITION", "MIN", "PTS", "FGM", "FGA",
      "DREB", "REB", "AST", "TO", "STL", "BLK", "PF", "FIRST_NAME",
      "SECOND_NAME"}
 
-local ls_keys = {"PTS_QTR1", "PTS_QTR2", "PTS_QTR3", "PTS_QTR4", "PTS",
-   "FG_PCT", "FG3_PCT", "FT_PCT", "REB", "AST", "TOV", "WINS", "LOSSES",
-   "CITY", "NAME"}
+local ls_keys = {"TEAM-PTS_QTR1", "TEAM-PTS_QTR2", "TEAM-PTS_QTR3", "TEAM-PTS_QTR4", "TEAM-PTS",
+   "TEAM-FG_PCT", "TEAM-FG3_PCT", "TEAM-FT_PCT", "TEAM-REB", "TEAM-AST", "TEAM-TOV", "TEAM-WINS", "TEAM-LOSSES",
+   "TEAM-CITY", "TEAM-NAME"}
 
 -- this will make vocab for every word in summary or in a table cell or header i think
 local function makeVocabulary(jsondat, size)
   local wordVocab = onmt.utils.Dict.new({onmt.Constants.PAD_WORD, onmt.Constants.UNK_WORD,
                                          onmt.Constants.BOS_WORD, onmt.Constants.EOS_WORD})
   local featuresVocabs = {}
+
+  local colVocab = onmt.utils.Dict.new({onmt.Constants.PAD_WORD, onmt.Constants.UNK_WORD}) -- UNK not really necessary
+  for i = 1, #bs_keys do
+      colVocab:add(bs_keys[i])
+  end
+  for i = 1, #ls_keys do
+      colVocab:add(ls_keys[i])
+  end
+
+  local rowVocab = onmt.utils.Dict.new({onmt.Constants.PAD_WORD, onmt.Constants.UNK_WORD})
+  local cellVocab = onmt.utils.Dict.new({onmt.Constants.PAD_WORD, onmt.Constants.UNK_WORD})
+  cellVocab:add("N/A")
 
   for i = 1, #jsondat do
       local game = jsondat[i]
@@ -67,9 +79,9 @@ local function makeVocabulary(jsondat, size)
       for t = 1, #bs_keys do
           local k = bs_keys[t]
           local tbl = game.box_score[k]
-      --for k, tbl in pairs(game.box_score) do
           for idx, val in pairs(tbl) do
               wordVocab:add(val)
+              cellVocab:add(val)
           end
       end
 
@@ -77,26 +89,28 @@ local function makeVocabulary(jsondat, size)
       for t = 1, #ls_keys do
           local k = ls_keys[t]
           local v = game.home_line[k]
-      --for k, v in pairs(game.home_line) do
           wordVocab:add(v)
+          cellVocab:add(v)
           wordVocab:add(game.vis_line[k])
+          cellVocab:add(game.vis_line[k])
       end
-    --   -- also add cities and names
-    --   wordVocab:add(game.home_name)
-    --   wordVocab:add(game.home_city)
-    --   wordVocab:add(game.vis_name)
-    --   wordVocab:add(game.vis_city)
+
+      for k, v in pairs(game.box_score.PLAYER_NAME) do
+          rowVocab:add(v)
+      end
+      rowVocab:add(game.home_line["TEAM-NAME"])
+      rowVocab:add(game.vis_line["TEAM-NAME"])
   end
 
   local originalSize = wordVocab:size()
   wordVocab = wordVocab:prune(size)
   print('Created dictionary of size ' .. wordVocab:size() .. ' (pruned from ' .. originalSize .. ')')
 
-  return wordVocab, featuresVocabs
+  return wordVocab, featuresVocabs, colVocab, rowVocab, cellVocab
 end
 
 local function initVocabulary(name, jsondat, vocabFile, vocabSize, featuresVocabsFiles)
-  local wordVocab
+  local wordVocab, colVocab, rowVocab, cellVocab
   local featuresVocabs = {}
 
   if vocabFile:len() > 0 then
@@ -130,10 +144,13 @@ local function initVocabulary(name, jsondat, vocabFile, vocabSize, featuresVocab
   if wordVocab == nil or (#featuresVocabs == 0 and hasFeatures(dataFile)) then
     -- If a dictionary is still missing, generate it.
     print('Building ' .. name  .. ' vocabulary...')
-    local genWordVocab, genFeaturesVocabs = makeVocabulary(jsondat, vocabSize)
+    local genWordVocab, genFeaturesVocabs, genColVocab, genRowVocab, genCellVocab = makeVocabulary(jsondat, vocabSize)
 
     if wordVocab == nil then
       wordVocab = genWordVocab
+      colVocab = genColVocab
+      rowVocab = genRowVocab
+      cellVocab = genCellVocab
     end
     if #featuresVocabs == 0 then
       featuresVocabs = genFeaturesVocabs
@@ -144,7 +161,10 @@ local function initVocabulary(name, jsondat, vocabFile, vocabSize, featuresVocab
 
   return {
     words = wordVocab,
-    features = featuresVocabs
+    features = featuresVocabs,
+    cols = colVocab,
+    rows = rowVocab,
+    cells = cellVocab
   }
 end
 
@@ -208,6 +228,8 @@ local function makeData(jsondat, srcDicts, tgtDicts, shuffle)
   end
   local srcFeatures = tds.Vec()
 
+  local srcTriples = tds.Vec()
+
   local tgt = tds.Vec()
   local tgtFeatures = tds.Vec()
 
@@ -219,7 +241,6 @@ local function makeData(jsondat, srcDicts, tgtDicts, shuffle)
   -- local srcReader = onmt.utils.FileReader.new(srcFile)
   -- local tgtReader = onmt.utils.FileReader.new(tgtFile)
 
-
   for i = 1, #jsondat do
     -- local srcTokens = srcReader:next()
     -- local tgtTokens = tgtReader:next()
@@ -229,27 +250,39 @@ local function makeData(jsondat, srcDicts, tgtDicts, shuffle)
 
     local tgtTokens = game.summary
 
-    -- if srcTokens == nil or tgtTokens == nil then
-    --   if srcTokens == nil and tgtTokens ~= nil or srcTokens ~= nil and tgtTokens == nil then
-    --     print('WARNING: source and target do not have the same number of sentences')
-    --   end
-    --   break
-    -- end
+    -- row, col, val
+    -- leave out PLAYER_NAME, FIRST_NAME, SECOND_NAME in bs_keys, and TEAM-NAME, TEAM-CITY in ls_keys
+    local gameTriples = torch.IntTensor(2*players_per_team*(#bs_keys-3) + 2*(#ls_keys-2), 3):fill(1)
 
-    --if #srcTokens > 0 and #srcTokens <= opt.src_seq_length
     if #tgtTokens > 0 and #tgtTokens <= opt.tgt_seq_length then
-      --local srcWords, srcFeats = onmt.utils.Features.extract(srcTokens)
-      --local tgtWords, tgtFeats = onmt.utils.Features.extract(tgtTokens)
       local tgtWords = tgtTokens
 
+      local tripleIdx = 1
       for ii, player_list in ipairs({home_players, vis_players}) do
           for j = 1, players_per_team do
               local src_j = {}
               local player_key = player_list[j] -- can be nil if not enough
+
+              local playerIdx = srcDicts.rows:lookup(game.box_score.PLAYER_NAME[player_key])
+              if not playerIdx and not shuffle then -- validation
+                  playerIdx = 2 -- UNK
+              end
+              assert(playerIdx or not player_key)
+
               for k, key in ipairs(bs_keys) do
                   local val = game.box_score[key][player_key]
                   assert(val or (not player_key))
                   table.insert(src_j, val or "N/A")
+                  if player_key and key ~= "PLAYER_NAME" and key ~= "FIRST_NAME" and key ~= "SECOND_NAME" then
+                      local colIdx = srcDicts.cols:lookup(key)
+                      assert(colIdx)
+                      local valIdx = srcDicts.cells:lookup(val)
+                      assert(valIdx)
+                      gameTriples[tripleIdx][1] = playerIdx
+                      gameTriples[tripleIdx][2] = colIdx
+                      gameTriples[tripleIdx][3] = valIdx
+                      tripleIdx = tripleIdx + 1
+                  end
               end
               local idxs = srcDicts.words:convertToIdx(src_j, onmt.Constants.UNK_WORD)
               assert(idxs:dim() > 0)
@@ -263,16 +296,39 @@ local function makeData(jsondat, srcDicts, tgtDicts, shuffle)
           table.insert(home_src, onmt.Constants.PAD_WORD)
           table.insert(vis_src, onmt.Constants.PAD_WORD)
       end
-    --   -- add city and team names
-    --   table.insert(home_src, game.home_city)
-    --   table.insert(home_src, game.home_name)
-    --   table.insert(vis_src, game.vis_city)
-    --   table.insert(vis_src, game.vis_name)
+
       -- add rest of the stuff
+      local homeIdx = srcDicts.rows:lookup(game.home_line["TEAM-NAME"])
+      assert(homeIdx)
+      local visIdx = srcDicts.rows:lookup(game.vis_line["TEAM-NAME"])
+      assert(visIdx)
       for k, key in ipairs(ls_keys) do
-          --print(k, key, game.home_line[key])
+          local colIdx = srcDicts.cols:lookup(key)
+          assert(colIdx)
+
           table.insert(home_src, game.home_line[key])
+          local homeValIdx = srcDicts.cells:lookup(game.home_line[key])
+          assert(homeValIdx)
+
           table.insert(vis_src, game.vis_line[key])
+          local visValIdx = srcDicts.cells:lookup(game.vis_line[key])
+          if not visValIdx and not shuffle then --Validation
+              visValIdx = 2
+          end
+          assert(visValIdx)
+
+          if key ~= "TEAM-NAME" and key ~= "TEAM-CITY" then
+              gameTriples[tripleIdx][1] = homeIdx
+              gameTriples[tripleIdx][2] = colIdx
+              gameTriples[tripleIdx][3] = homeValIdx
+              tripleIdx = tripleIdx + 1
+
+              gameTriples[tripleIdx][1] = visIdx
+              gameTriples[tripleIdx][2] = colIdx
+              gameTriples[tripleIdx][3] = visValIdx
+              tripleIdx = tripleIdx + 1
+          end
+
       end
 
       assert(#home_src == srcs[1][1]:size(1))
@@ -284,6 +340,7 @@ local function makeData(jsondat, srcDicts, tgtDicts, shuffle)
       assert(idxs:dim() > 0)
       srcs[2*players_per_team+2]:insert(idxs)
 
+      srcTriples:insert(gameTriples)
 
       --src:insert(srcDicts.words:convertToIdx(srcWords, onmt.Constants.UNK_WORD))
       tgt:insert(tgtDicts.words:convertToIdx(tgtWords,
@@ -308,7 +365,7 @@ local function makeData(jsondat, srcDicts, tgtDicts, shuffle)
     if count % opt.report_every == 0 then
       print('... ' .. count .. ' sentences prepared')
     end
-  end
+  end     -- end for i = 1, #jsondat
 
   --srcReader:close()
   --tgtReader:close()
@@ -319,6 +376,8 @@ local function makeData(jsondat, srcDicts, tgtDicts, shuffle)
     for j = 1, #srcs do
         srcs[j] = onmt.utils.Table.reorder(srcs[j], perm, true)
     end
+
+    onmt.utils.Table.reorder(srcTriples, perm, true)
 
     if #srcDicts.features > 0 then
       srcFeatures = onmt.utils.Table.reorder(srcFeatures, perm, true)
@@ -349,7 +408,8 @@ local function makeData(jsondat, srcDicts, tgtDicts, shuffle)
 
   local srcData = {
     words = srcs,
-    features = srcFeatures
+    features = srcFeatures,
+    triples = srcTriples
   }
 
   local tgtData = {
@@ -377,6 +437,8 @@ local function main()
   data.dicts = {}
   data.dicts.src = initVocabulary('source', jsondat.train, opt.src_vocab,
                                   opt.src_vocab_size, opt.features_vocabs_prefix)
+  for k,v in pairs(data.dicts.src) do print(k) end
+
   data.dicts.tgt = data.dicts.src
   -- data.dicts.tgt = initVocabulary('target', opt.train_tgt, opt.tgt_vocab,
   --                                 opt.tgt_vocab_size, opt.features_vocabs_prefix)

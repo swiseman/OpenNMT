@@ -57,7 +57,7 @@ Parameters:
   * `tgtFeatures` - 2D table of target batch features (opt)
 --]]
 function BoxBatch3:__init(srcs, srcFeatures, tgt, tgtFeatures, bsLen,
-    colStartIdx, nFeatures)
+    colStartIdx, nFeatures, tripIdxs, tripV)
   local srcs = srcs or {}
 
   if tgt ~= nil then
@@ -75,7 +75,7 @@ function BoxBatch3:__init(srcs, srcFeatures, tgt, tgtFeatures, bsLen,
 
   --local sourceSeq = torch.IntTensor(#srcs, self.sourceLength, self.size):fill(onmt.Constants.PAD)
   -- source concatenates all rows in the table into a single column (and concatenates everything in the batch too)
-  self.sourceInput = torch.IntTensor(self.size*self.totalSourceLength, nFeatures)
+  self.sourceInput = torch.LongTensor(self.size*self.totalSourceLength, nFeatures)
   --self.sourceInput = sourceSeq:clone()
 
   if tgt ~= nil then
@@ -85,12 +85,14 @@ function BoxBatch3:__init(srcs, srcFeatures, tgt, tgtFeatures, bsLen,
     self.targetNonZeros = self.rulTargetNonZeros
     self.targetSize = self.rulTargetSize
 
-    local targetSeq = torch.IntTensor(self.rulTargetLength, self.size):fill(onmt.Constants.PAD)
+    local targetSeq = torch.LongTensor(self.rulTargetLength, self.size):fill(onmt.Constants.PAD)
     self.targetInput = targetSeq:clone()
     self.targetOutput = targetSeq:clone()
   end
 
-
+  if tripIdxs ~= nil then
+      self.triples = torch.zeros(self.size, tripIdxs[1]:size(1), tripV[1]+tripV[2]+tripV[3])
+  end
 
   local currRow = 1
 
@@ -134,7 +136,14 @@ function BoxBatch3:__init(srcs, srcFeatures, tgt, tgtFeatures, bsLen,
       self.targetOutput[{{1, targetLength}, b}]:copy(targetOutput)
 
     end
-  end
+
+    if tripIdxs ~= nil then
+        self.triples[b]:narrow(2, 1, tripV[1]):scatter(2, tripIdxs[b]:narrow(2, 1, 1), 1)
+        self.triples[b]:narrow(2, tripV[1]+1, tripV[2]):scatter(2, tripIdxs[b]:narrow(2, 2, 1), 1)
+        self.triples[b]:narrow(2, tripV[1]+tripV[2]+1, tripV[3]):scatter(2, tripIdxs[b]:narrow(2, 3, 1), 1)
+    end
+
+  end -- end for b
   --print(currRow, self.sourceInput:size(1))
   assert(currRow == self.sourceInput:size(1)+1)
 

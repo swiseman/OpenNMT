@@ -28,7 +28,7 @@ Parameters:
   * `inputFeed` - bool, enable input feeding.
 --]]
 function ConvRecDecoder:__init(inputNetwork, rnn, generator, inputFeed,
-    doubleOutput, numFilters, numRecPreds, rho)
+    doubleOutput, rec, recViewer, rho)
   self.rnn = rnn
   self.inputNet = inputNetwork
 
@@ -52,7 +52,8 @@ function ConvRecDecoder:__init(inputNetwork, rnn, generator, inputFeed,
   -- likelihoods over the target vocabulary.
   self.generator = generator
   self:add(self.generator)
-  self.rec = self:_buildReconstructor(numFilters, numRecPreds)
+  self.recViewer = recViewer
+  self.rec = rec
   self:add(self.rec)
 
   self:resetPreallocation()
@@ -167,57 +168,6 @@ function ConvRecDecoder:_buildModel()
   return nn.gModule(inputs, outputs)
 end
 
-function ConvRecDecoder:_buildReconstructor(numFilters, numPreds, nDiscFeatures)
-    self.recViewer = nn.View(1, -1, self.args.rnnSize)
-    local mod = nn.Sequential()
-                 :add(nn.JoinTable(2)) -- batchSize x seqLen*dim
-                 :add(self.recViewer) -- batchSize x seqLen x dim
-                 :add(nn.ConcatTable()
-                        :add(nn.Sequential()
-                            -- maybe no pad, since unreliable?
-             	            :add(cudnn.TemporalConvolution(self.args.rnnSize, numFilters, 3, 1, 0))
-             		        :add(nn.ReLU())
-             		        :add(nn.Max(2)))
-             	         :add(nn.Sequential()
-                            -- maybe no pad, since unreliable?
-             	            :add(cudnn.TemporalConvolution(self.args.rnnSize, numFilters, 5, 1, 0))
-             		        :add(nn.ReLU())
-             		        :add(nn.Max(2))))
-                 :add(nn.JoinTable(2)) -- batchSize x 2*numFilters
-
-    local nWindowFeats = 2*numFilters
-
-    if not nDiscFeatures then
-        -- maybe want some mlp stuff first?
-        mod:add(nn.Linear(nWindowFeats, self.args.rnnSize*numPreds)) -- batchSize x numPreds*rnnSize
-    else
-        mod:add(nn.Linear(nWindowFeats, srcEmbSize*numPreds))
-        mod:add(nn.ReLU())
-        mod:add(nn.View(-1, numPreds, srcEmbSize)) -- batchSize x numPreds x srcEmbSize
-
-        assert(not partitionFeats or srcEmbSize % nDiscFeatures == 0)
-        local featEmbDim = partitionFeats and srcEmbSize/nDiscFeatures or srcEmbSize
-
-        local cat = nn.ConcatTable()
-        for i = 1, nDiscFeatures do
-            local featPredictor = nn.Sequential()
-
-            if partitionFeats then
-                assert(srcEmbSize % nDiscFeatures == 0)
-                featPredictor:add(nn.Narrow(2, (i-1)*featEmbDim+1, featEmbDim))
-            end
-
-            featPredictor:add(nn.Bottle( nn.Sequential()
-                                           :add(nn.Linear(featEmbDim, outVocabSize[i]))
-                                           :add(nn.LogSoftMax()) ))
-            cat:add(featPredictor)
-        end
-        mod:add(cat) -- nDiscFeatures length table of batchSize x numPreds x outVocabSize tensors
-        mod:add(nn.JoinTable(3)) -- batchSize x numPreds x sum[outVocabSizes]
-    end
-
-    return mod
-end
 
 --[[ Mask padding means that the attention-layer is constrained to
   give zero-weight to padding. This is done by storing a reference

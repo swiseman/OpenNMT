@@ -38,16 +38,27 @@ end
   When using CPU only, converts to float instead of the default double.
 ]]
 function Cuda.convert(obj)
-  if torch.typename(obj) then
+  local objtype = torch.typename(obj)
+  if objtype then
     if Cuda.activated and obj.cuda ~= nil then
-      return obj:cuda()
+      if objtype:find('torch%..*LongTensor') then
+        return obj:type('torch.CudaLongTensor')
+      elseif Cuda.fp16 then
+        return obj:type('torch.CudaHalfTensor')
+      else
+        return obj:type('torch.CudaTensor')
+      end
     elseif not Cuda.activated and obj.float ~= nil then
       -- Defaults to float instead of double.
-      return obj:float()
+      if objtype:find('torch%..*LongTensor') then
+        return obj:type('torch.LongTensor')
+      else
+        return obj:type('torch.FloatTensor')
+      end
     end
   end
 
-  if torch.typename(obj) or type(obj) == 'table' then
+  if objtype or type(obj) == 'table' then
     for k, v in pairs(obj) do
       obj[k] = Cuda.convert(v)
     end
@@ -55,6 +66,25 @@ function Cuda.convert(obj)
 
   return obj
 end
+
+-- function Cuda.convert(obj)
+--   if torch.typename(obj) then
+--     if Cuda.activated and obj.cuda ~= nil then
+--       return obj:cuda()
+--     elseif not Cuda.activated and obj.float ~= nil then
+--       -- Defaults to float instead of double.
+--       return obj:float()
+--     end
+--   end
+--
+--   if torch.typename(obj) or type(obj) == 'table' then
+--     for k, v in pairs(obj) do
+--       obj[k] = Cuda.convert(v)
+--     end
+--   end
+--
+--   return obj
+-- end
 
 function Cuda.getGPUs(ngpu)
   local gpus = {}
