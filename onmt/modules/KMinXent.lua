@@ -25,7 +25,7 @@ function KMinXent:updateOutput(input, target)
     else
         self.net:get(5).constant_scalar = -1
     end
-    self.output = self.net:forward({input, target})
+    self.output = self.net:forward({input, target})[1]
     return self.output
 end
 

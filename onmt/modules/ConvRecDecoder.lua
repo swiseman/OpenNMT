@@ -408,7 +408,7 @@ function ConvRecDecoder:backward(batch, outputs, criterion, ctxLen, recCrit)
       local recpreds = self.rec:forward(outputs)
       local recOutGradOut, recCtxGradOut
       if self.args.discrec then
-          recloss = recCrit:forward(recpreds, batch:getSourceTriples())
+          recloss = recCrit:forward(recpreds, batch:getSourceTriples())*self.args.rho
           recOutGradOut = recCrit:backward(recpreds, batch:getSourceTriples())
       else
           recloss = recCrit:forward(recpreds, context)*self.args.rho

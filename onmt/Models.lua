@@ -135,14 +135,14 @@ local function buildRec(opt, tripV)
         mod:add(nn.ReLU())
         mod:add(nn.View(-1, opt.nrecpreds, opt.recembsize)) -- batchSize x numPreds x srcEmbSize
 
-        assert(not partitionFeats or opt.recembsize % nDiscFeatures == 0)
-        local featEmbDim = partitionFeats and opt.recembsize/nDiscFeatures or opt.recembsize
+        assert(not opt.partition_feats or opt.recembsize % nDiscFeatures == 0)
+        local featEmbDim = opt.partition_feats and opt.recembsize/nDiscFeatures or opt.recembsize
 
         local cat = nn.ConcatTable()
         for i = 1, nDiscFeatures do
             local featPredictor = nn.Sequential()
 
-            if partitionFeats then
+            if opt.partition_feats then
                 assert(opt.recembsize % nDiscFeatures == 0)
                 featPredictor:add(nn.Narrow(2, (i-1)*featEmbDim+1, featEmbDim))
             end
