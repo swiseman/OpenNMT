@@ -1,4 +1,4 @@
-require 'cudnn'
+--require 'cudnn'
 --[[ Unit to decode a sequence of output tokens.
 
      .      .      .             .
