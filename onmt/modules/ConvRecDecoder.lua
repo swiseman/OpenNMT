@@ -1,4 +1,6 @@
-require 'cudnn'
+local status, module = pcall(require, 'cudnn')
+cudnn = status and module or nil
+--require 'cudnn'
 --[[ Unit to decode a sequence of output tokens.
 
      .      .      .             .

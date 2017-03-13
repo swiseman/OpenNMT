@@ -377,7 +377,7 @@ local function makeData(jsondat, srcDicts, tgtDicts, shuffle)
         srcs[j] = onmt.utils.Table.reorder(srcs[j], perm, true)
     end
 
-    onmt.utils.Table.reorder(srcTriples, perm, true)
+    srcTriples = onmt.utils.Table.reorder(srcTriples, perm, true)
 
     if #srcDicts.features > 0 then
       srcFeatures = onmt.utils.Table.reorder(srcFeatures, perm, true)

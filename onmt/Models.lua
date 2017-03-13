@@ -144,7 +144,7 @@ local function buildRec(opt, tripV)
 
             if opt.partition_feats then
                 assert(opt.recembsize % nDiscFeatures == 0)
-                featPredictor:add(nn.Narrow(2, (i-1)*featEmbDim+1, featEmbDim))
+                featPredictor:add(nn.Narrow(3, (i-1)*featEmbDim+1, featEmbDim))
             end
 
             featPredictor:add(nn.Bottle( nn.Sequential()
