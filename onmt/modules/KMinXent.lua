@@ -2,7 +2,6 @@ require 'nn'
 
 local KMinXent, parent = torch.class('nn.KMinXent', 'nn.Criterion')
 
--- will square the distance for p=2, tho maybe we shouldn't...
 function KMinXent:__init()
    parent.__init(self)
    self.sizeAverage = true

@@ -405,6 +405,7 @@ function ConvRecDecoder:backward(batch, outputs, criterion, ctxLen, recCrit)
 
   -- rec loss and gradients
   local recloss = 0
+  local recStepGradOuts
   if batch.targetLength >= 5 then
       self.recViewer:resetSize(batch.size, -1, self.args.rnnSize)
       local recpreds = self.rec:forward(outputs)
@@ -418,7 +419,7 @@ function ConvRecDecoder:backward(batch, outputs, criterion, ctxLen, recCrit)
           -- add encoder grads
           gradContextInput:add(self.args.rho/batch.totalSize, recCtxGradOut)
       end
-      local recStepGradOuts = self.rec:backward(outputs, recOutGradOut)
+      recStepGradOuts = self.rec:backward(outputs, recOutGradOut)
   end
 
 
@@ -499,24 +500,33 @@ Parameters:
   * `criterion` - a pointwise criterion.
 
 --]]
-function ConvRecDecoder:computeLoss(batch, encoderStates, context, criterion)
+function ConvRecDecoder:computeLoss(batch, encoderStates, context, criterion, recCrit)
+  -- don't do this unless the whole seq is like less than the window size
   local encoderStates = encoderStates
     or onmt.utils.Tensor.initTensorTable(self.args.numEffectiveLayers,
                                          onmt.utils.Cuda.convert(torch.Tensor()),
                                          { batch.size, self.args.rnnSize })
 
   local loss = 0
+  local outputs = {}
+
   self:forwardAndApply(batch, encoderStates, context, function (out, t, finalState)
     --print(torch.abs(out):sum())
+    table.insert(outputs, out)
     local genInp = {out, context, finalState, batch:getSourceWords()}
     local pred = self.generator:forward(genInp)
     local output = batch:getTargetOutput(t)
     loss = loss + criterion:forward(pred, output)
     --print("loss", loss)
   end)
-  --print("")
 
-  return loss
+  self.recViewer:resetSize(batch.size, -1, self.args.rnnSize)
+  local recpreds = self.rec:forward(outputs)
+  local recOutGradOut, recCtxGradOut
+  assert(self.args.discrec)
+  local recloss = recCrit:forward(recpreds, batch:getSourceTriples())*self.args.rho
+
+  return loss + recloss
 end
 
 

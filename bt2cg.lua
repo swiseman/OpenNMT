@@ -35,7 +35,13 @@ cmd:option('-just_lm', false, [[No conditioning]])
 cmd:option('-copy_generate', false, [[]])
 cmd:option('-tanh_query', false, [[]])
 cmd:option('-poe', false, [[]])
-
+cmd:option('-recdist', 0, [[]])
+cmd:option('-discrec', false, [[]])
+cmd:option('-recembsize', 300, [[]])
+cmd:option('-partition_feats', false, [[]])
+cmd:option('-nfilters', 200, [[]])
+cmd:option('-nrecpreds', 3, [[]])
+cmd:option('-rho', 0.5, [[]])
 
 cmd:option('-pool', 'mean', [[mean or max]])
 cmd:option('-enc_layers', 1, [[]])
@@ -118,20 +124,19 @@ local function initParams(model, verbose)
 
     if opt.train_from:len() == 0 then
         p:uniform(-opt.param_init, opt.param_init)
+        -- do module specific init; wordembeddings will happen multiple times,
+        -- but who cares
+        for k, mod in pairs(model) do
+            mod:apply(function (m)
+                if m.postParametersInitialization then
+                    m:postParametersInitialization()
+                end
+            end)
+        end
     else
         print("copying loaded params...")
         local checkpoint = torch.load(opt.train_from)
         p:copy(checkpoint.flatParams[1])
-    end
-
-    -- do module specific init; wordembeddings will happen multiple times,
-    -- but who cares
-    for k, mod in pairs(model) do
-        mod:apply(function (m)
-            if m.postParametersInitialization then
-                m:postParametersInitialization()
-            end
-        end)
     end
 
     numParams = numParams + p:size(1)
@@ -242,6 +247,14 @@ local function trainModel(model, trainData, validData, dataset, info)
     -- define criterion of each GPU
     criterion = onmt.utils.Cuda.convert(buildCriterion(dataset.dicts.tgt.words:size(),
                                                           dataset.dicts.tgt.features))
+    local recCrit
+    if opt.discrec then
+        recCrit = onmt.utils.Cuda.convert(nn.KMinXent())
+        recCrit.sizeAverage = false
+    elseif opt.recdist > 0 then
+        recCrit = onmt.utils.Cuda.convert(nn.KMinDist(opt.recdist))
+        recCrit.sizeAverage = false
+    end
 
     -- optimize memory of the first clone
     if not opt.disable_mem_optimization then
@@ -298,7 +311,8 @@ local function trainModel(model, trainData, validData, dataset, info)
             local ctxLen = catCtx:size(2)
 
             local decOutputs = model.decoder:forward(batch, aggEncStates, catCtx)
-            local encGradStatesOut, gradContext, loss = model.decoder:backward(batch, decOutputs, criterion, ctxLen)
+            local encGradStatesOut, gradContext, loss, recloss = model.decoder:backward(batch, decOutputs,
+                                                                       criterion, ctxLen, recCrit)
             allEncBackward(model, batch, encGradStatesOut, gradContext)
             --print("ey", gradParams[1]:norm())
 
@@ -306,7 +320,7 @@ local function trainModel(model, trainData, validData, dataset, info)
                 local aggEncStates, catCtx = allEncForward(model, batch)
                 local ctxLen = catCtx:size(2)
                 model.decoder:resetLastStates()
-                local loss = model.decoder:computeLoss(batch, aggEncStates, catCtx, criterion)
+                local loss = model.decoder:computeLoss(batch, aggEncStates, catCtx, criterion, recCrit)
                 -- assuming max_bptt is short enough that we don't get to ignores
                 return loss/(batch.size) -- during training we don't normalize by seqlen
             end
@@ -338,7 +352,7 @@ local function trainModel(model, trainData, validData, dataset, info)
             --local chosenmod = model.encoder.modules[1].modules[12]
 
             --local rowz = {2032, 3251, 2033, 931, 80, 36}
-            local rowz = {1,2,5, 2032, 3251, 2033}
+            local rowz = {1,2,5, 2263, 70, 2264}
             for jj = 1, #rowz do
                 local pp = chosenmod.weight[rowz[jj]]
                 local gg = chosenmod.gradWeight[rowz[jj]]
@@ -394,7 +408,7 @@ local function trainModel(model, trainData, validData, dataset, info)
                 -- Update the parameters.
             --    optim:prepareGrad(gradParams, opt.max_grad_norm)
             --    optim:updateParams(params, gradParams)
-            --    epochState:update(batch, loss)
+            --    epochState:update(batch, loss, recloss)
             --    batch:nextPiece()
             --end
 
@@ -498,8 +512,14 @@ local function main()
 
   g_tgtDict = dataset.dicts.tgt.words
 
-  local trainData = onmt.data.BoxDataset2.new(dataset.train.src, dataset.train.tgt, colStartIdx, g_nFeatures, opt.copy_generate)
-  local validData = onmt.data.BoxDataset2.new(dataset.valid.src, dataset.valid.tgt, colStartIdx, g_nFeatures, opt.copy_generate)
+  local tripV   -- vocabulary for each element in a triple (for rec)
+  if opt.discrec then
+      tripV = {dataset.dicts.src.rows:size(), dataset.dicts.src.cols:size(), dataset.dicts.src.cells:size()}
+      print("tripV:", tripV)
+  end
+
+  local trainData = onmt.data.BoxDataset2.new(dataset.train.src, dataset.train.tgt, colStartIdx, g_nFeatures, opt.copy_generate, nil, tripV)
+  local validData = onmt.data.BoxDataset2.new(dataset.valid.src, dataset.valid.tgt, colStartIdx, g_nFeatures, opt.copy_generate, nil, tripV)
 
   trainData:setBatchSize(opt.max_batch_size)
   validData:setBatchSize(opt.max_batch_size)
@@ -543,7 +563,7 @@ local function main()
 
     local verbose = true
     -- make decoder first
-    model.decoder = onmt.Models.buildDecoder(opt, dataset.dicts.tgt, verbose)
+    model.decoder = onmt.Models.buildDecoder(opt, dataset.dicts.tgt, verbose, tripV)
     -- send to gpu immediately to make cloning things simpler
     onmt.utils.Cuda.convert(model.decoder)
     model.encoder = onmt.BoxTableEncoder({

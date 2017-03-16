@@ -90,7 +90,7 @@ function BoxBatch3:__init(srcs, srcFeatures, tgt, tgtFeatures, bsLen,
     self.targetOutput = targetSeq:clone()
   end
 
-  if tripIdxs ~= nil and #tripIdxs > 0 then
+  if tripIdxs ~= nil and #tripIdxs > 0 and tripV then
       self.triples = torch.zeros(self.size, tripIdxs[1]:size(1), tripV[1]+tripV[2]+tripV[3])
   end
 
@@ -137,7 +137,8 @@ function BoxBatch3:__init(srcs, srcFeatures, tgt, tgtFeatures, bsLen,
 
     end
 
-    if tripIdxs ~= nil and #tripIdxs > 0 then
+    -- make one hot (concatenated) triple representation
+    if tripIdxs ~= nil and #tripIdxs > 0 and tripV then
         self.triples[b]:narrow(2, 1, tripV[1]):scatter(2, tripIdxs[b]:narrow(2, 1, 1), 1)
         self.triples[b]:narrow(2, tripV[1]+1, tripV[2]):scatter(2, tripIdxs[b]:narrow(2, 2, 1), 1)
         self.triples[b]:narrow(2, tripV[1]+tripV[2]+1, tripV[3]):scatter(2, tripIdxs[b]:narrow(2, 3, 1), 1)
