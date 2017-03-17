@@ -5,7 +5,7 @@ translate.Beam = require('onmt.translate.Beam')
 translate.BeamSearcher = require('onmt.translate.BeamSearcher')
 translate.DecoderAdvancer = require('onmt.translate.DecoderAdvancer')
 translate.PhraseTable = require('onmt.translate.PhraseTable')
-translate.Translator = require('onmt.translate.Translator')
+--translate.Translator = require('onmt.translate.Translator')
 
 translate.Decoder2Advancer = require('onmt.translate.Decoder2Advancer')
 return translate

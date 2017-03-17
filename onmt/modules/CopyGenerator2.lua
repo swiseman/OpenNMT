@@ -13,7 +13,6 @@ function CopyGenerator2:__init(rnnSize, outputSize, tanhQuery, doubleOutput)
   self.outputSize = outputSize
 end
 
--- N.B. this uses attnLayer, but should maybe use last real layer (in which case we need 3 inputs)
 function CopyGenerator2:_buildGenerator(rnnSize, outputSize, tanhQuery, doubleOutput)
     local tstate = nn.Identity()() -- attnlayer (numEffectiveLayers+1)
     local context = nn.Identity()()

@@ -392,7 +392,7 @@ local function trainModel(model, trainData, validData, dataset, info)
 
     if opt.just_gen then
         --onmt.train.Greedy.greedy_gen(model, validData, nil, g_tgtDict, 1000)
-        beamGen(model, validData)
+        beamGen(model, validData, g_tgtDict)
         return
     elseif opt.just_eval then
         validPpl = eval(model, criterion, validData)

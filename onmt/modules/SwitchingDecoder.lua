@@ -14,7 +14,7 @@
 Inherits from [onmt.Sequencer](onmt+modules+Sequencer).
 
 --]]
-local Decoder, parent = torch.class('onmt.Decoder', 'onmt.Sequencer')
+local SwitchingDecoder, parent = torch.class('onmt.SwitchingDecoder', 'onmt.Sequencer')
 
 
 --[[ Construct a decoder layer.
@@ -28,7 +28,7 @@ Parameters:
   * `returnAttnScores` - bool, return unnormalized attn scores at each step
   * `tanhQuery` - bool, add an additional nonlinearity to target state when computing attn
 --]]
-function Decoder:__init(inputNetwork, rnn, generator, inputFeed,
+function SwitchingDecoder:__init(inputNetwork, rnn, generator, inputFeed,
     returnAttnScores, tanhQuery)
   self.rnn = rnn
   self.inputNet = inputNetwork
@@ -54,12 +54,18 @@ function Decoder:__init(inputNetwork, rnn, generator, inputFeed,
   self.generator = generator
   self:add(self.generator)
 
+  self.ptrGenerator = onmt.PointerGenerator(self.args.rnnSize, tanhQuery, false)
+  self:add(self.ptrGenerator)
+
+  self.switcher = self:_buildSwitcher()
+  self:add(self.switcher)
+
   self:resetPreallocation()
 end
 
 --[[ Return a new Decoder using the serialized data `pretrained`. ]]
-function Decoder.load(pretrained)
-  local self = torch.factory('onmt.Decoder')()
+function SwitchingDecoder.load(pretrained)
+  local self = torch.factory('onmt.SwitchingDecoder')()
 
   self.args = pretrained.args
 
@@ -73,14 +79,14 @@ function Decoder.load(pretrained)
 end
 
 --[[ Return data to serialize. ]]
-function Decoder:serialize()
+function SwitchingDecoder:serialize()
   return {
     modules = self.modules,
     args = self.args
   }
 end
 
-function Decoder:resetPreallocation()
+function SwitchingDecoder:resetPreallocation()
   if self.args.inputFeed then
     self.inputFeedProto = torch.Tensor()
   end
@@ -108,7 +114,7 @@ Returns: An nn-graph mapping
   ${if}$ is the input feeding, and
   ${a}$ is the context vector computed at this timestep.
 --]]
-function Decoder:_buildModel()
+function SwitchingDecoder:_buildModel()
   local inputs = {}
   local states = {}
 
@@ -168,6 +174,20 @@ function Decoder:_buildModel()
   return nn.gModule(inputs, outputs)
 end
 
+function SwitchingDecoder:_buildSwitcher()
+    local switcher = nn.Sequential()
+                       :add(nn.ParallelTable()
+                              :add(nn.Mean(2))
+                              :add(nn.Identity()))
+                       :add(nn.JoinTable(2))
+                       :add(nn.Linear(2*self.args.rnnSize, self.args.rnnSize))
+                       :add(nn.ReLU())
+                       :add(nn.Linear(self.args.rnnSize, 1))
+                       :add(nn.Sigmoid())
+    return switcher
+end
+
+
 --[[ Mask padding means that the attention-layer is constrained to
   give zero-weight to padding. This is done by storing a reference
   to the softmax attention-layer.
@@ -176,7 +196,7 @@ end
 
   * See  [onmt.MaskedSoftmax](onmt+modules+MaskedSoftmax).
 --]]
-function Decoder:maskPadding(sourceSizes, sourceLength)
+function SwitchingDecoder:maskPadding(sourceSizes, sourceLength)
 
   local function substituteSoftmax(module)
     if module.name == 'softmaxAttn' then
@@ -220,15 +240,15 @@ function Decoder:maskPadding(sourceSizes, sourceLength)
   end
 end
 
-function Decoder:remember()
+function SwitchingDecoder:remember()
     self._remember = true
 end
 
-function Decoder:forget()
+function SwitchingDecoder:forget()
     self._remember = false
 end
 
-function Decoder:resetLastStates()
+function SwitchingDecoder:resetLastStates()
     self.lastStates = nil
 end
 
@@ -247,7 +267,7 @@ Returns:
  1. `out` - Top-layer hidden state.
  2. `states` - All states.
 --]]
-function Decoder:forwardOne(input, prevStates, context, prevOut, t)
+function SwitchingDecoder:forwardOne(input, prevStates, context, prevOut, t)
   local inputs = {}
 
   -- Create RNN input (see sequencer.lua `buildNetwork('dec')`).
@@ -301,7 +321,7 @@ end
   * `func` - Calls `func(out, t)` each timestep.
 --]]
 
-function Decoder:forwardAndApply(batch, encoderStates, context, func)
+function SwitchingDecoder:forwardAndApply(batch, encoderStates, context, func)
   -- TODO: Make this a private method.
 
   if self.statesProto == nil then
@@ -345,7 +365,7 @@ end
 
   Returns: Table of top hidden state for each timestep.
 --]]
-function Decoder:forward(batch, encoderStates, context)
+function SwitchingDecoder:forward(batch, encoderStates, context)
   encoderStates = encoderStates
     or onmt.utils.Tensor.initTensorTable(self.args.numEffectiveLayers,
                                          onmt.utils.Cuda.convert(torch.Tensor()),
@@ -374,7 +394,7 @@ Parameters:
   Note: This code runs both the standard backward and criterion forward/backward.
   It returns both the gradInputs and the loss.
   -- ]]
-function Decoder:backward(batch, outputs, criterion, ctxLen)
+function SwitchingDecoder:backward(batch, outputs, criterion, ctxLen)
   local decLayers = self.args.numEffectiveLayers + 1
   if self.args.returnAttnScores then
     decLayers = decLayers + 1
@@ -406,7 +426,21 @@ function Decoder:backward(batch, outputs, criterion, ctxLen)
 
   local loss = 0
 
+  local context = self.inputs[1][self.args.inputIndex.context]
+
   for t = batch.targetLength, 1, -1 do
+    local finalLayer = self:net(t).output[self.args.numEffectiveLayers]
+
+    local zpreds = self.switcher:forward(finalLayer)
+    local switchLoss = switchCrit:forward(zpreds, batch:getZs())
+    local zpredGradOut = switchCrit:backward(zpreds, batch:getZs())
+
+    local ptrPreds = self.ptrGenerator:forward({context, finalLayer})
+    local ptrLoss = criterion:forward(ptrPreds, batch:getGoldLocs())
+    local ptrPredGradOut = criterion:backward(ptrPreds, batch:getGoldLocs())
+
+
+
     -- Compute decoder output gradients.
     -- Note: This would typically be in the forward pass.
     local pred = self.generator:forward(outputs[t])
@@ -477,7 +511,7 @@ Parameters:
   * `criterion` - a pointwise criterion.
 
 --]]
-function Decoder:computeLoss(batch, encoderStates, context, criterion)
+function SwitchingDecoder:computeLoss(batch, encoderStates, context, criterion)
   local encoderStates = encoderStates
     or onmt.utils.Tensor.initTensorTable(self.args.numEffectiveLayers,
                                          onmt.utils.Cuda.convert(torch.Tensor()),
@@ -503,7 +537,7 @@ Parameters:
   * `context` - the attention context.
 
 --]]
-function Decoder:computeScore(batch, encoderStates, context)
+function SwitchingDecoder:computeScore(batch, encoderStates, context)
   local encoderStates = encoderStates
     or onmt.utils.Tensor.initTensorTable(self.args.numEffectiveLayers,
                                          onmt.utils.Cuda.convert(torch.Tensor()),
@@ -523,7 +557,7 @@ function Decoder:computeScore(batch, encoderStates, context)
   return score
 end
 
-function Decoder:greedyFixedFwd(batch, encoderStates, context, probBuf)
+function SwitchingDecoder:greedyFixedFwd(batch, encoderStates, context, probBuf)
     if not self.greedy_inp then
         self.greedy_inp = torch.CudaTensor()
         self.maxes = torch.CudaTensor()
