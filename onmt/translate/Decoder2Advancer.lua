@@ -47,8 +47,8 @@ function Decoder2Advancer:initBeam()
   local sourceSizes = onmt.utils.Cuda.convert(self.batch.sourceSize)
 
   -- Define state to be { decoder states, decoder output, context,
-  -- attentions, features, sourceSizes, step }.
-  local state = { self.decStates, nil, self.context, nil, features, sourceSizes, 1 }
+  -- attentions, features, sourceSizes, step, idxsOfSourceWords }.
+  local state = { self.decStates, nil, self.context, nil, features, sourceSizes, 1, self.getSourceWords() }
   return onmt.translate.Beam.new(tokens, state)
 end
 
@@ -61,8 +61,8 @@ Parameters:
 ]]
 function Decoder2Advancer:update(beam)
   local state = beam:getState()
-  local decStates, decOut, context, _, features, sourceSizes, t
-    = table.unpack(state, 1, 7)
+  local decStates, decOut, context, _, features, sourceSizes, t, sourceIdxs
+    = table.unpack(state, 1, 8)
   local tokens = beam:getTokens()
   local token = tokens[#tokens]
   local inputs
@@ -79,7 +79,7 @@ function Decoder2Advancer:update(beam)
   decOut, decStates = self.decoder:forwardOne(inputs, decStates, context, decOut)
   t = t + 1
   local softmaxOut = nil -- self.decoder.softmaxAttn.output
-  local nextState = {decStates, decOut, context, softmaxOut, nil, sourceSizes, t}
+  local nextState = {decStates, decOut, context, softmaxOut, nil, sourceSizes, t, sourceIdxs}
   beam:setState(nextState)
 end
 
@@ -99,8 +99,9 @@ function Decoder2Advancer:expand(beam)
   local state = beam:getState()
   local decOut = state[2]
   local context = state[3]
-  local finalState = decOut[1][#decOut[1]]
-  local genInp = {decOut, context, finalState, self.batch:getSourceWords()}
+  local finalState = state[1][#state[1]]
+  local sourceIdxs = state[8]
+  local genInp = {decOut, context, finalState, sourceIdxs}
   local out = self.decoder.generator:forward(genInp)
   --local out = self.decoder.generator:forward(decOut)
 
@@ -165,4 +166,4 @@ function Decoder2Advancer:filter(beam)
   return pruned:ge(1)
 end
 
-return DecoderAdvancer2
+return Decoder2Advancer

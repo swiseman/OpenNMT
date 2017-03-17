@@ -21,6 +21,7 @@ cmd:option('-train_from', '', [[If training from a checkpoint then this is the p
 cmd:option('-continue', false, [[If training from a checkpoint, whether to continue the training in the same configuration or not.]])
 cmd:option('-just_eval', false, [[]])
 cmd:option('-just_gen', false, [[]])
+cmd:option('-beam_size', 5, [[]])
 cmd:option('-verbose_eval', false, [[]])
 cmd:option('-scoresomethings', false, [[]])
 
