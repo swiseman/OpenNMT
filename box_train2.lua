@@ -22,6 +22,7 @@ cmd:option('-continue', false, [[If training from a checkpoint, whether to conti
 cmd:option('-just_eval', false, [[]])
 cmd:option('-just_gen', false, [[]])
 cmd:option('-beam_size', 5, [[]])
+cmd:option('-gen_file', 'preds.txt', [[]])
 cmd:option('-verbose_eval', false, [[]])
 cmd:option('-scoresomethings', false, [[]])
 
@@ -249,10 +250,22 @@ local function eval(model, criterion, data)
   return math.exp(loss / total)
 end
 
-local function beamGen(model, data)
+local function convert_and_shorten_string(ts, max_len, dict)
+   local strtbl = {}
+   for i = 1, max_len do
+       if ts[i] == onmt.Constants.EOS then
+           break
+       end
+       table.insert(strtbl, dict.idxToLabel[ts[i]])
+   end
+   return stringx.join(' ', strtbl)
+end
+
+local function beamGen(model, data, tgtDict)
   -- adapted from Translator:translateBatch()
   local max_sent_length = 1500
   allEvaluate(model)
+  local outFile = io.open(opt.gen_file, 'w')
   for i = 1, data:batchCount() do
     model.decoder:resetLastStates()
     local batch = onmt.utils.Cuda.convert(data:getBatch(i))
@@ -263,8 +276,11 @@ local function beamGen(model, data)
     local results = beamSearcher:search(opt.beam_size, 1, 1, false)
     for b = 1, batch.size do
         local top1 = results[b][1].tokens
+        local top1tostr = convert_and_shorten_string(top1, #top1, tgtDict)
+        outFile:write(top1tostr, '\n')
     end
   end
+  outFile:close()
 end
 
 

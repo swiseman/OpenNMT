@@ -4,7 +4,7 @@ function CIndexAddTo:__init(ip, maxbatchsize, maxcols)
     parent.__init(self)
     self.inplace = ip -- only good for one arg
     self.gradInput = {}
-    self.maxbatchsize = maxbatchsize or 64
+    self.maxbatchsize = maxbatchsize or 1024
     self.maxcols = maxcols or 1000
     self.range = torch.range(0, self.maxbatchsize-1)
     self.cols = torch.Tensor(self.maxcols)
@@ -33,7 +33,7 @@ function CIndexAddTo:updateOutput(input) -- expects input to be 3 things
         newidxs = newidxs:long()
     end
 
-    self.opcopy = self.opcopy or idxs.new() -- in case idxs are CudaLongTensors    
+    self.opcopy = self.opcopy or idxs.new() -- in case idxs are CudaLongTensors
     self.opcopy:resize(newidxs:size(1), newidxs:size(2))
     self.opcopy:copy(newidxs):add(idxs)
     newidxs = self.opcopy

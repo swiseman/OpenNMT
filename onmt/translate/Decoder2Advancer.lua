@@ -48,7 +48,7 @@ function Decoder2Advancer:initBeam()
 
   -- Define state to be { decoder states, decoder output, context,
   -- attentions, features, sourceSizes, step, idxsOfSourceWords }.
-  local state = { self.decStates, nil, self.context, nil, features, sourceSizes, 1, self.getSourceWords() }
+  local state = { self.decStates, nil, self.context, nil, features, sourceSizes, 1, self.batch:getSourceWords() }
   return onmt.translate.Beam.new(tokens, state)
 end
 
