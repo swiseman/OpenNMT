@@ -1,3 +1,21 @@
+--[[ Recursively call `func()` on all tensors within `out`. ]]
+local function recursiveApply(out, func, ...)
+  local res
+  if torch.type(out) == 'table' then
+    res = {}
+    for k, v in pairs(out) do
+      res[k] = recursiveApply(v, func, ...)
+    end
+    return res
+  end
+  if torch.isTensor(out) then
+    res = func(out, ...)
+  else
+    res = out
+  end
+  return res
+end
+
 --[[ Recursively call `clone()` on all tensors within `out`. ]]
 local function recursiveClone(out)
   if torch.isTensor(out) then
@@ -178,6 +196,7 @@ end
 
 
 return {
+  recursiveApply = recursiveApply,
   recursiveClone = recursiveClone,
   recursiveSet = recursiveSet,
   deepClone = deepClone,

@@ -248,6 +248,25 @@ local function eval(model, criterion, data)
   return math.exp(loss / total)
 end
 
+local function beamGen(model, data)
+  -- adapted from Translator:translateBatch()
+  local max_sent_length = 1500
+  allEvaluate(model)
+  for i = 1, data:batchCount() do
+    model.decoder:resetLastStates()
+    local batch = onmt.utils.Cuda.convert(data:getBatch(i))
+    local aggEncStates, catCtx = allEncForward(model, batch)
+    local advancer = onmt.translate.Decoder2Advancer.new(model.decoder,
+       batch, catCtx, max_sent_length, nil, aggEncStates, nil)
+    local beamSearcher = onmt.translate.BeamSearcher.new(advancer)
+    local results = beamSearcher:search(opt.beam_size, 1, 1, false)
+    for b = 1, batch.size do
+        local top1 = results[b][1].tokens
+    end
+  end
+end
+
+
 local function trainModel(model, trainData, validData, dataset, info)
     local criterion
     local verbose = true
@@ -355,7 +374,8 @@ local function trainModel(model, trainData, validData, dataset, info)
     end
 
     if opt.just_gen then
-        onmt.train.Greedy.greedy_gen(model, validData, nil, g_tgtDict, 1000)
+        --onmt.train.Greedy.greedy_gen(model, validData, nil, g_tgtDict, 1000)
+        beamGen(model, validData)
         return
     elseif opt.just_eval then
         validPpl = eval(model, criterion, validData)

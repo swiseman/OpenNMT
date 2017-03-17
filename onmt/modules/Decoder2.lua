@@ -171,31 +171,32 @@ end
   * See  [onmt.MaskedSoftmax](onmt+modules+MaskedSoftmax).
 --]]
 function Decoder2:maskPadding(sourceSizes, sourceLength, beamSize)
-  if not self.decoderAttn then
-    self.network:apply(function (layer)
-      if layer.name == 'decoderAttn' then
-        self.decoderAttn = layer
-      end
-    end)
-  end
-
-  self.decoderAttn:replace(function(module)
-    if module.name == 'softmaxAttn' then
-      local mod
-      if sourceSizes ~= nil then
-        mod = onmt.MaskedSoftmax(sourceSizes, sourceLength, beamSize)
-      else
-        mod = nn.SoftMax()
-      end
-
-      mod.name = 'softmaxAttn'
-      mod:type(module._type)
-      self.softmaxAttn = mod
-      return mod
-    else
-      return module
-    end
-  end)
+  -- making this a no-op
+  -- if not self.decoderAttn then
+  --   self.network:apply(function (layer)
+  --     if layer.name == 'decoderAttn' then
+  --       self.decoderAttn = layer
+  --     end
+  --   end)
+  -- end
+  --
+  -- self.decoderAttn:replace(function(module)
+  --   if module.name == 'softmaxAttn' then
+  --     local mod
+  --     if sourceSizes ~= nil then
+  --       mod = onmt.MaskedSoftmax(sourceSizes, sourceLength, beamSize)
+  --     else
+  --       mod = nn.SoftMax()
+  --     end
+  --
+  --     mod.name = 'softmaxAttn'
+  --     mod:type(module._type)
+  --     self.softmaxAttn = mod
+  --     return mod
+  --   else
+  --     return module
+  --   end
+  -- end)
 end
 
 function Decoder2:remember()
@@ -498,8 +499,7 @@ Parameters:
 
 --]]
 function Decoder2:computeScore(batch, encoderStates, context)
-  assert(false)
-  encoderStates = encoderStates
+  local encoderStates = encoderStates
     or onmt.utils.Tensor.initTensorTable(self.args.numEffectiveLayers,
                                          onmt.utils.Cuda.convert(torch.Tensor()),
                                          { batch.size, self.args.rnnSize })
