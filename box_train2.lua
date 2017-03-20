@@ -48,6 +48,10 @@ cmd:option('-nfilters', 200, [[]])
 cmd:option('-nrecpreds', 3, [[]])
 cmd:option('-rho', 0.5, [[]])
 
+cmd:option('-switch', false, [[]])
+cmd:option('-multilabel', false, [[]])
+cmd:option('-map', false, [[]])
+
 cmd:option('-pool', 'mean', [[mean or max]])
 cmd:option('-enc_layers', 1, [[]])
 cmd:option('-enc_emb_size', 200, [[]])
@@ -305,6 +309,16 @@ local function trainModel(model, trainData, validData, dataset, info)
         recCrit.sizeAverage = false
     end
 
+    local switchCrit, ptrCrit
+    if opt.switch then
+        switchCrit = onmt.utils.Cuda.convert(nn.BCELoss())
+        switchCrit.sizeAverage = false
+        if opt.multilabel then
+            ptrCrit = onmt.utils.Cuda.convert(nn.MarginalNLLCriterion())
+            ptrCrit.sizeAverage = false
+        end
+    end
+
     -- optimize memory of the first clone
     if not opt.disable_mem_optimization then
         local batch = onmt.utils.Cuda.convert(trainData:getBatch(1))
@@ -359,7 +373,8 @@ local function trainModel(model, trainData, validData, dataset, info)
 
                 local decOutputs = model.decoder:forward(batch, aggEncStates, catCtx)
                 local encGradStatesOut, gradContext, loss, recloss = model.decoder:backward(batch, decOutputs,
-                                                                           criterion, ctxLen, recCrit)
+                                                                           criterion, ctxLen, recCrit,
+                                                                            switchCrit, ptrCrit)
                 allEncBackward(model, batch, encGradStatesOut, gradContext)
 
                 -- Update the parameters.
@@ -508,9 +523,14 @@ local function main()
   assert(dataset.dicts.src.words:size() == dataset.dicts.tgt.words:size())
   -- add extra shit for all the column features
   --Hacky Constants
-  g_nRegRows = 13
-  g_specPadding = 22 --want to take the last thing now which is the team name (not in first place anymore)--7
-  g_nCols = 22 --20
+  --g_nRegRows = 13
+  g_nRegRows = #dataset.train.src.words/2 - 1 -- two teams and nRegRows players
+  assert(g_nRegRows == 13)
+  --g_nCols = 22 -- note this disregards first bs_key, which is like the row i guess
+  g_nCols = dataset.train.src.words[1][1]:size(1) - 1 -- leave off first b/c it's like the row name
+  assert(g_nCols == 22)
+  --g_specPadding = 22 --want to take the last thing now which is the team name (not in first place anymore)--7
+  g_specPadding = g_nCols -- assume last real column is the row name for special (i.e., team) rows
   g_nFeatures = 4
 
   if not opt.just_gen then
@@ -535,8 +555,10 @@ local function main()
       print("tripV:", tripV)
   end
 
-  local trainData = onmt.data.BoxDataset2.new(dataset.train.src, dataset.train.tgt, colStartIdx, g_nFeatures, opt.copy_generate, nil, tripV)
-  local validData = onmt.data.BoxDataset2.new(dataset.valid.src, dataset.valid.tgt, colStartIdx, g_nFeatures, opt.copy_generate, nil, tripV)
+  local trainData = onmt.data.BoxDataset2.new(dataset.train.src, dataset.train.tgt,
+    colStartIdx, g_nFeatures, opt.copy_generate, nil, tripV, opt.switch, opt.multilabel)
+  local validData = onmt.data.BoxDataset2.new(dataset.valid.src, dataset.valid.tgt,
+    colStartIdx, g_nFeatures, opt.copy_generate, nil, tripV) -- no switching on valid
 
   trainData:setBatchSize(opt.max_batch_size)
   validData:setBatchSize(opt.max_batch_size)

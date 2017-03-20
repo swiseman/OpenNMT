@@ -191,6 +191,8 @@ local function buildDecoder(opt, dicts, verbose, tripV)
           local rec, recViewer = buildRec(opt, tripV)
           return onmt.ConvRecDecoder.new(inputNetwork, rnn, generator, opt.input_feed == 1,
                        opt.double_output, rec, recViewer, opt.rho, opt.discrec)
+      elseif opt.switch then
+          return onmt.SwitchingDecoder.new(inputNetwork, rnn, generator, opt.input_feed == 1, false, false, opt.map)
       else
           return onmt.Decoder2.new(inputNetwork, rnn, generator, opt.input_feed == 1, opt.double_output)
       end

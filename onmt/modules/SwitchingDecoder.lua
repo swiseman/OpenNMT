@@ -29,7 +29,7 @@ Parameters:
   * `tanhQuery` - bool, add an additional nonlinearity to target state when computing attn
 --]]
 function SwitchingDecoder:__init(inputNetwork, rnn, generator, inputFeed,
-    returnAttnScores, tanhQuery)
+    returnAttnScores, tanhQuery, map)
   self.rnn = rnn
   self.inputNet = inputNetwork
 
@@ -39,6 +39,7 @@ function SwitchingDecoder:__init(inputNetwork, rnn, generator, inputFeed,
 
   self.args.inputIndex = {}
   self.args.outputIndex = {}
+  self.map = map -- map perplexity computation
 
   -- Input feeding means the decoder takes an extra
   -- vector each time representing the attention at the
@@ -182,6 +183,7 @@ function SwitchingDecoder:_buildSwitcher()
                        :add(nn.JoinTable(2))
                        :add(nn.Linear(2*self.args.rnnSize, self.args.rnnSize))
                        :add(nn.ReLU())
+                       --:add(nn.Dropout(0.3))
                        :add(nn.Linear(self.args.rnnSize, 1))
                        :add(nn.Sigmoid())
     return switcher
@@ -394,7 +396,8 @@ Parameters:
   Note: This code runs both the standard backward and criterion forward/backward.
   It returns both the gradInputs and the loss.
   -- ]]
-function SwitchingDecoder:backward(batch, outputs, criterion, ctxLen)
+function SwitchingDecoder:backward(batch, outputs, criterion, ctxLen, dummy, switchCrit, ptrCrit)
+  assert(not self.args.returnAttnScores) -- otherwise have to get grads from generated shit and zero out differently
   local decLayers = self.args.numEffectiveLayers + 1
   if self.args.returnAttnScores then
     decLayers = decLayers + 1
@@ -428,30 +431,48 @@ function SwitchingDecoder:backward(batch, outputs, criterion, ctxLen)
 
   local context = self.inputs[1][self.args.inputIndex.context]
 
+  local ptrCrit = ptrCrit or criterion
+
   for t = batch.targetLength, 1, -1 do
     local finalLayer = self:net(t).output[self.args.numEffectiveLayers]
 
-    local zpreds = self.switcher:forward(finalLayer)
-    local switchLoss = switchCrit:forward(zpreds, batch:getZs())
-    local zpredGradOut = switchCrit:backward(zpreds, batch:getZs())
+    local zs = batch:getZs(t)
+    local zpreds = self.switcher:forward({context, finalLayer})
+    local switchLoss = switchCrit:forward(zpreds, zs)
+    local zpredGradOut = switchCrit:backward(zpreds, zs)
+    zpredGradOut:div(batch.totalSize)
+    local decSwitchGO = self.switcher:backward({context, finalLayer}, zpredGradOut)
 
     local ptrPreds = self.ptrGenerator:forward({context, finalLayer})
-    local ptrLoss = criterion:forward(ptrPreds, batch:getGoldLocs())
-    local ptrPredGradOut = criterion:backward(ptrPreds, batch:getGoldLocs())
+    local ptrLoss = ptrCrit:forward(ptrPreds, batch:getPointerTargets(t))
+    local ptrPredGradOut = ptrCrit:backward(ptrPreds, batch:getPointerTargets(t))
+    ptrPredGradOut[1]:div(batch.totalSize)
+    for b = 1, batch.size do
+        if zs[b] ~= 1 then -- not a copy
+            ptrPredGradOut[1][b]:zero()
+        end
+    end
+    local decPtrGO = self.ptrGenerator:backward({context, finalLayer}, ptrPredGradOut)
 
-
+    gradContextInput:add(decSwitchGO[1])
+    gradContextInput:add(decPtrGO[1])
 
     -- Compute decoder output gradients.
     -- Note: This would typically be in the forward pass.
     local pred = self.generator:forward(outputs[t])
     local output = batch:getTargetOutput(t)
-
+    -- training loss we return will be wrong b/c disregards zs, but who cares
     loss = loss + criterion:forward(pred, output)
 
     -- Compute the criterion gradient.
     local genGradOut = criterion:backward(pred, output)
     for j = 1, #genGradOut do
       genGradOut[j]:div(batch.totalSize)
+      for b = 1, batch.size do
+          if zs[b] == 1 then -- a copy
+              genGradOut[j][b]:zero()
+          end
+      end
     end
 
     -- Compute the final layer gradient.
@@ -465,11 +486,12 @@ function SwitchingDecoder:backward(batch, outputs, criterion, ctxLen)
     end
 
     for j = 1, outputLayers do
-        -- print(t, j)
-        -- print(gradStatesInput[decLayers-outputLayers+j]:size())
-        -- print(decGradOut[j]:size())
         gradStatesInput[decLayers-outputLayers+j]:add(decGradOut[j])
     end
+
+    gradStatesInput[decLayers-outputLayers]:add(decSwitchGO[2])
+    gradStatesInput[decLayers-outputLayers]:add(decPtrGO[2])
+
 
     -- Compute the standard backward.
     local gradInput = self:net(t):backward(self.inputs[t], gradStatesInput)
@@ -519,9 +541,35 @@ function SwitchingDecoder:computeLoss(batch, encoderStates, context, criterion)
 
   local loss = 0
   self:forwardAndApply(batch, encoderStates, context, function (out, t)
+    local finalLayer = self:net(t).output[self.args.numEffectiveLayers]
+    local zpreds = self.switcher:forward({context, finalLayer})
+    local ptrPreds = self.ptrGenerator:forward({context, finalLayer})
     local pred = self.generator:forward(out)
     local output = batch:getTargetOutput(t)
-    loss = loss + criterion:forward(pred, output)
+    for b = 1, batch.size do
+        if self.map then -- just take argmax prob
+            if zpreds[b] >= 0.5 then -- a copy
+                pred[b]:zero()
+                --  marginalize over all copies of same word
+                ptrPreds[b]:exp()
+                pred[b]:indexAdd(1, batch:getCellsForExample(b), ptrPreds[b])
+                pred[b]:log()
+                loss = loss - pred[b][output[b]]
+            else
+                loss = loss - pred[b][output[b]]
+            end
+        else -- truly marginalize
+            pred[b]:add(math.log(1-zpreds[b]))
+            ptrPreds[b]:add(math.log(zpreds[b]))
+            pred[b]:exp()
+            ptrPreds[b]:exp()
+            pred[b]:indexAdd(1, batch:getCellsForExample(b), ptrPreds)
+            pred[b]:log()
+            loss = loss - pred[b][output[b]]
+        end
+    end
+
+    --loss = loss + criterion:forward(pred, output)
   end)
 
   return loss

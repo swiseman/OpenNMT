@@ -26,6 +26,9 @@ require('onmt.modules.KMinDist')
 require('onmt.modules.KMinXent')
 require('onmt.modules.ConvRecDecoder')
 
+require('onmt.modules.SwitchingDecoder')
+require('onmt.modules.PointerGenerator')
+
 --require('onmt.modules.CopyPOEGenerator')
 require('onmt.modules.CIndexAddTo')
 --require('onmt.modules.MaxMask')

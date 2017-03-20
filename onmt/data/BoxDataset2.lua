@@ -6,16 +6,19 @@ local BoxDataset2 = torch.class("BoxDataset2")
   and `tgtData`.
 --]]
 function BoxDataset2:__init(srcData, tgtData, colStartIdx, nFeatures,
-      copyGenerate, version, tripV)
+      copyGenerate, version, tripV, switch, multilabel)
 
   self.srcs = srcData.words
   self.srcFeatures = srcData.features
   self.srcTriples = srcData.triples
   self.tripV = tripV
+  self.switch = switch
+  self.multilabel = multilabel
 
   if tgtData ~= nil then
     self.tgt = tgtData.words
     self.tgtFeatures = tgtData.features
+    self.ptrs = switch and tgtData.pointers
   end
   -- source length(s) don't change (and we'll pad line scores...)
   self.maxSourceLength = self.srcs[1][1]:size(1)
@@ -88,6 +91,7 @@ function BoxDataset2:getBatch(idx)
   for j = 1, #self.srcs do srcs[j] = {} end
   local tgt = {}
   local triples = {}
+  local pointers = {}
 
   local srcFeatures = {}
   local tgtFeatures = {}
@@ -102,6 +106,10 @@ function BoxDataset2:getBatch(idx)
         table.insert(triples, self.srcTriples[i]:long())
     end
 
+    if self.switch then
+        table.insert(pointers, self.pointers[i])
+    end
+
     if self.srcFeatures[i] then
       table.insert(srcFeatures, self.srcFeatures[i])
     end
@@ -111,9 +119,16 @@ function BoxDataset2:getBatch(idx)
     end
   end
 
-  local bb = onmt.data.BoxBatch3.new(srcs, srcFeatures, tgt, tgtFeatures,
+  local bb
+  if self.switch then
+      bb = onmt.data.BoxSwitchBatch.new(srcs, srcFeatures, tgt, tgtFeatures,
+            self.maxSourceLength, self.colStartIdx, self.nFeatures,
+            pointers, self.multilabel)
+  else
+      bb = onmt.data.BoxBatch3.new(srcs, srcFeatures, tgt, tgtFeatures,
         self.maxSourceLength, self.colStartIdx, self.nFeatures,
         triples, self.tripV)
+  end
   return bb
 end
 

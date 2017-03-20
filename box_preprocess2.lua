@@ -3,6 +3,7 @@ require('onmt.init')
 local tds = require('tds')
 local path = require('pl.path')
 local cjson = require('cjson')
+local stringx = require('pl.stringx')
 
 local cmd = torch.CmdLine()
 
@@ -23,6 +24,7 @@ cmd:option('-tgt_vocab_size', 50000, [[Size of the target vocabulary]])
 cmd:option('-src_vocab', '', [[Path to an existing source vocabulary]])
 cmd:option('-tgt_vocab', '', [[Path to an existing target vocabulary]])
 cmd:option('-features_vocabs_prefix', '', [[Path prefix to existing features vocabularies]])
+cmd:option('-ptr_info', false, [[]])
 
 cmd:option('-src_seq_length', 50, [[Maximum source sequence length]])
 cmd:option('-tgt_seq_length', 50, [[Maximum target sequence length]])
@@ -379,6 +381,10 @@ local function makeData(jsondat, srcDicts, tgtDicts, shuffle)
 
     srcTriples = onmt.utils.Table.reorder(srcTriples, perm, true)
 
+    if opt.ptr_info then
+        g_ptrStuff = onmt.utils.Table.reorder(g_ptrStuff, perm, true)
+    end
+
     if #srcDicts.features > 0 then
       srcFeatures = onmt.utils.Table.reorder(srcFeatures, perm, true)
     end
@@ -387,10 +393,20 @@ local function makeData(jsondat, srcDicts, tgtDicts, shuffle)
     end
   end
 
+  if opt.ptr_info then
+      assert(not shuffle or #g_ptrStuff == #srcs[1])
+  end
+
   --if opt.shuffle == 1 then
   if shuffle then
     print('... shuffling sentences')
     local perm = torch.randperm(#tgt)
+    -- print("writing perm...")
+    -- local outFile = io.open("trperm.txt", 'w')
+    -- for ii = 1, perm:size(1) do
+    --     outFile:write(perm[ii], "\n")
+    -- end
+    -- outFile:close()
     --print(perm)
     sizes = onmt.utils.Table.reorder(sizes, perm, true)
     reorderData(perm)
@@ -414,7 +430,8 @@ local function makeData(jsondat, srcDicts, tgtDicts, shuffle)
 
   local tgtData = {
     words = tgt,
-    features = tgtFeatures
+    features = tgtFeatures,
+    pointers = shuffle and g_ptrStuff
   }
 
   return srcData, tgtData
@@ -431,6 +448,39 @@ local function main()
   local f = io.open(opt.json_src)
   local jsondat = cjson.decode(f:read("*all"))
   f:close()
+
+  if opt.ptr_info then
+      g_ptrStuff = tds.Vec()
+      local fi = assert(io.open("pointershit.txt", "r"))
+      while true do
+          local line = fi:read()
+          if line == nil then
+              break
+          end
+          local pieces = stringx.split(line)
+          local lineTuples = {}
+          local maxTupleLen = 0
+          for j = 1, #pieces do
+              local tuple = stringx.split(pieces[j], ',')
+              table.insert(lineTuples, tuple)
+              if #tuple > maxTupleLen then
+                  maxTupleLen = #tuple
+              end
+          end
+          assert(#pieces == #lineTuples)
+          -- put these in a tensor
+          local tupleTensor = torch.IntTensor(#lineTuples, maxTupleLen+1) -- last idx will have length
+          for j = 1, #lineTuples do
+              tupleTensor[j][maxTupleLen+1] = #lineTuples[j]-1 -- number of labels/ptrsrcs
+              tupleTensor[j][1] = tonumber(lineTuples[j][1])+1 -- make 1-indexed
+              for k = 2, #lineTuples[j] do
+                  tupleTensor[j][k] = tonumber(lineTuples[j][k])+1 -- make 1-indexed
+              end
+          end
+          g_ptrStuff:insert(tupleTensor)
+      end
+      fi:close()
+  end
 
   local data = {}
 

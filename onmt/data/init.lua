@@ -8,5 +8,6 @@ data.BoxBatch = require('onmt.data.BoxBatch')
 data.BoxDataset2 = require('onmt.data.BoxDataset2')
 --data.BoxBatch2 = require('onmt.data.BoxBatch2')
 data.BoxBatch3 = require('onmt.data.BoxBatch3')
+data.BoxSwitchBatch = require('onmt.data.BoxSwitchBatch')
 
 return data
