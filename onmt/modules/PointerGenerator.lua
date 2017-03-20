@@ -28,15 +28,18 @@ function PointerGenerator:_buildGenerator(rnnSize, tanhQuery, doubleOutput)
 end
 
 function PointerGenerator:updateOutput(input)
-  self.output = {self.net:updateOutput(input)}
+  --self.output = {self.net:updateOutput(input)}
+  self.output = self.net:updateOutput(input)
   return self.output
 end
 
 function PointerGenerator:updateGradInput(input, gradOutput)
-  self.gradInput = self.net:updateGradInput(input, gradOutput[1])
+  --self.gradInput = self.net:updateGradInput(input, gradOutput[1])
+  self.gradInput = self.net:updateGradInput(input, gradOutput)
   return self.gradInput
 end
 
 function PointerGenerator:accGradParameters(input, gradOutput, scale)
-  self.net:accGradParameters(input, gradOutput[1], scale)
+  --self.net:accGradParameters(input, gradOutput[1], scale)
+  self.net:accGradParameters(input, gradOutput, scale)
 end

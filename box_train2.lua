@@ -311,10 +311,13 @@ local function trainModel(model, trainData, validData, dataset, info)
 
     local switchCrit, ptrCrit
     if opt.switch then
-        switchCrit = onmt.utils.Cuda.convert(nn.BCELoss())
+        switchCrit = onmt.utils.Cuda.convert(nn.BCECriterion())
         switchCrit.sizeAverage = false
         if opt.multilabel then
             ptrCrit = onmt.utils.Cuda.convert(nn.MarginalNLLCriterion())
+            ptrCrit.sizeAverage = false
+        else
+            ptrCrit = onmt.utils.Cuda.convert(nn.ClassNLLCriterion())
             ptrCrit.sizeAverage = false
         end
     end
@@ -323,7 +326,7 @@ local function trainModel(model, trainData, validData, dataset, info)
     if not opt.disable_mem_optimization then
         local batch = onmt.utils.Cuda.convert(trainData:getBatch(1))
         batch.totalSize = batch.size
-        onmt.utils.Memory.boxOptimize2(model, criterion, batch, verbose)
+        onmt.utils.Memory.boxOptimize2(model, criterion, batch, verbose, switchCrit, ptrCrit)
     end
 
     local optim = onmt.train.Optim.new({

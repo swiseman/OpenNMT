@@ -89,7 +89,7 @@ function Memory.boxOptimize(model, nSourceRows, criterion, batch, verbose)
   batch.targetLength = realSizes.targetLength
 end
 
-function Memory.boxOptimize2(model, criterion, batch, verbose)
+function Memory.boxOptimize2(model, criterion, batch, verbose, switchCrit, ptrCrit)
   if verbose then
     print('Preparing memory optimization...')
   end
@@ -112,7 +112,7 @@ function Memory.boxOptimize2(model, criterion, batch, verbose)
   local ctxLen = catCtx:size(2)
   local decOutputs = model.decoder:forward(batch, aggEncStates, catCtx)
   decOutputs = onmt.utils.Tensor.recursiveClone(decOutputs)
-  local encGradStatesOut, gradContext, loss = model.decoder:backward(batch, decOutputs, criterion, ctxLen)
+  local encGradStatesOut, gradContext, loss = model.decoder:backward(batch, decOutputs, criterion, ctxLen, nil, switchCrit, ptrCrit)
   allEncBackward(model, batch, encGradStatesOut, gradContext)
 
   -- mark shared tensors

@@ -18,7 +18,7 @@ function BoxDataset2:__init(srcData, tgtData, colStartIdx, nFeatures,
   if tgtData ~= nil then
     self.tgt = tgtData.words
     self.tgtFeatures = tgtData.features
-    self.ptrs = switch and tgtData.pointers
+    self.pointers = switch and tgtData.pointers
   end
   -- source length(s) don't change (and we'll pad line scores...)
   self.maxSourceLength = self.srcs[1][1]:size(1)
