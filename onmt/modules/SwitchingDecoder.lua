@@ -40,6 +40,7 @@ function SwitchingDecoder:__init(inputNetwork, rnn, generator, inputFeed,
   self.args.inputIndex = {}
   self.args.outputIndex = {}
   self.map = map -- map perplexity computation
+  self.multilabel = multilabel
 
   -- Input feeding means the decoder takes an extra
   -- vector each time representing the attention at the
@@ -547,25 +548,35 @@ function SwitchingDecoder:computeLoss(batch, encoderStates, context, criterion)
     local pred = self.generator:forward(out)[1]
     local output = batch:getTargetOutput(t)[1]
     for b = 1, batch.size do
-        if self.map then -- just take argmax prob
-            if zpreds[b][1] >= 0.5 then -- a copy
-                pred[b]:zero()
-                --  marginalize over all copies of same word
-                ptrPreds[b]:exp()
+        if output[b] ~= onmt.Constants.PAD then
+            if self.map then -- just take argmax prob
+                if zpreds[b][1] >= 0.5 then -- a copy
+                    pred[b]:zero()
+                    --  marginalize over all copies of same word
+                    if not self.multilabel then
+                        ptrPreds[b]:exp()
+                    end
+                    pred[b]:indexAdd(1, batch:getCellsForExample(b), ptrPreds[b])
+                    pred[b]:log()
+                    loss = loss - pred[b][output[b]]
+                else
+                    loss = loss - pred[b][output[b]]
+                end
+            else -- truly marginalize
+                pred[b]:add(math.log(1-zpreds[b][1]))
+                if self.multilabel then
+                    ptrPreds[b]:mul(zpreds[b][1])
+                else
+                    ptrPreds[b]:add(math.log(zpreds[b][1]))
+                end
+                pred[b]:exp()
+                if not self.multilabel then
+                    ptrPreds[b]:exp()
+                end
                 pred[b]:indexAdd(1, batch:getCellsForExample(b), ptrPreds[b])
                 pred[b]:log()
                 loss = loss - pred[b][output[b]]
-            else
-                loss = loss - pred[b][output[b]]
             end
-        else -- truly marginalize
-            pred[b]:add(math.log(1-zpreds[b][1]))
-            ptrPreds[b]:add(math.log(zpreds[b][1]))
-            pred[b]:exp()
-            ptrPreds[b]:exp()
-            pred[b]:indexAdd(1, batch:getCellsForExample(b), ptrPreds[b])
-            pred[b]:log()
-            loss = loss - pred[b][output[b]]
         end
     end
 
