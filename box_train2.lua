@@ -268,19 +268,27 @@ end
 local function beamGen(model, data, tgtDict)
   -- adapted from Translator:translateBatch()
   local max_sent_length = 1500
+  print("using max len:", 1500)
   allEvaluate(model)
   local outFile = io.open(opt.gen_file, 'w')
   for i = 1, data:batchCount() do
     model.decoder:resetLastStates()
     local batch = onmt.utils.Cuda.convert(data:getBatch(i))
     local aggEncStates, catCtx = allEncForward(model, batch)
-    local advancer = onmt.translate.Decoder2Advancer.new(model.decoder,
-       batch, catCtx, max_sent_length, nil, aggEncStates, nil)
+    local advancer
+    if opt.switch then
+        advancer = onmt.translate.SwitchingDecoderAdvancer.new(model.decoder,
+           batch, catCtx, max_sent_length, nil, aggEncStates, nil, opt.map, opt.multilabel)
+    else
+        advancer = onmt.translate.Decoder2Advancer.new(model.decoder,
+           batch, catCtx, max_sent_length, nil, aggEncStates, nil)
+    end
     local beamSearcher = onmt.translate.BeamSearcher.new(advancer)
     local results = beamSearcher:search(opt.beam_size, 1, 1, false)
     for b = 1, batch.size do
         local top1 = results[b][1].tokens
         local top1tostr = convert_and_shorten_string(top1, #top1, tgtDict)
+        print(top1tostr)
         outFile:write(top1tostr, '\n')
     end
   end
