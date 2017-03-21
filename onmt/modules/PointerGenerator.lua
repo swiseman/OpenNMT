@@ -4,13 +4,13 @@
 local PointerGenerator, parent = torch.class('onmt.PointerGenerator', 'nn.Container')
 
 
-function PointerGenerator:__init(rnnSize, tanhQuery, doubleOutput)
+function PointerGenerator:__init(rnnSize, tanhQuery, doubleOutput, multilabel)
   parent.__init(self)
-  self.net = self:_buildGenerator(rnnSize, tanhQuery, doubleOutput)
+  self.net = self:_buildGenerator(rnnSize, tanhQuery, doubleOutput, multilabel)
   self:add(self.net)
 end
 
-function PointerGenerator:_buildGenerator(rnnSize, tanhQuery, doubleOutput)
+function PointerGenerator:_buildGenerator(rnnSize, tanhQuery, doubleOutput, multilabel)
     local context = nn.Identity()()
     local pstate = nn.Identity()()
 
@@ -22,7 +22,7 @@ function PointerGenerator:_buildGenerator(rnnSize, tanhQuery, doubleOutput)
     end
     local attn = nn.MM()({context, nn.Replicate(1,3)(targetT)}) -- batchL x sourceL x 1
     attn = nn.Sum(3)(attn) -- batchL x sourceL
-    local output = nn.LogSoftMax()(attn)
+    local output = multilabel and nn.SoftMax()(attn) or nn.LogSoftMax()(attn)
     local inputs = {context, pstate}
     return nn.gModule(inputs, {output})
 end

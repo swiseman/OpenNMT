@@ -360,6 +360,7 @@ local function trainModel(model, trainData, validData, dataset, info)
         --opt.start_iteration = 1
 
         local iter = 1
+        local totalLoss2, totalLoss3 = 0, 0
         model.decoder:remember()
         for i = startI, trainData:batchCount() do
             local batchIdx = epoch <= opt.curriculum and i or batchOrder[i]
@@ -375,7 +376,7 @@ local function trainModel(model, trainData, validData, dataset, info)
                 local ctxLen = catCtx:size(2)
 
                 local decOutputs = model.decoder:forward(batch, aggEncStates, catCtx)
-                local encGradStatesOut, gradContext, loss, recloss = model.decoder:backward(batch, decOutputs,
+                local encGradStatesOut, gradContext, loss, loss2, loss3 = model.decoder:backward(batch, decOutputs,
                                                                            criterion, ctxLen, recCrit,
                                                                             switchCrit, ptrCrit)
                 allEncBackward(model, batch, encGradStatesOut, gradContext)
@@ -383,12 +384,19 @@ local function trainModel(model, trainData, validData, dataset, info)
                 -- Update the parameters.
                 optim:prepareGrad(gradParams, opt.max_grad_norm)
                 optim:updateParams(params, gradParams)
-                epochState:update(batch, loss, recloss)
+                --epochState:update(batch, loss, recloss)
+                epochState:update(batch, loss, nil)
+                totalLoss2 = totalLoss2 + loss2
+                totalLoss3 = totalLoss3 + loss3
                 batch:nextPiece()
             end
 
             if iter % opt.report_every == 0 then
                 epochState:log(iter, opt.json_log)
+                if opt.switch then
+                    print("switchLoss", loss2/epochState.status.trainNonzeros)
+                    print("ptrLoss", loss3/epochState.status.trainNonzeros)
+                end
                 collectgarbage()
             end
             if opt.save_every > 0 and iter % opt.save_every == 0 then

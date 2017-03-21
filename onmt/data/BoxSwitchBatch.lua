@@ -92,11 +92,13 @@ function BoxSwitchBatch:__init(srcs, srcFeatures, tgt, tgtFeatures, bsLen,
     self.zs = torch.zeros(self.rulTargetLength, self.size)
     if multilabel then
         -- find max labels
-        local maxLabels = pointers[1]:size(2)-2 -- subtract 1 for targetIdx and 1 for numLabels
-        for b = 2, self.size do
-            maxLabels = math.max(maxLabels, pointers[b]:size(2)-2)
+        local maxLabels = 1
+        for b = 1, self.size do
+            if pointers[b]:dim() > 0 then
+                maxLabels = math.max(maxLabels, pointers[b]:size(2)-2)
+            end
         end
-        self.pointerTargets = torch.ones(self.rulTargetLength, self.size, maxLabels)
+        self.pointerTargets = torch.ones(self.rulTargetLength, self.size, maxLabels+1)
     else
         self.pointerTargets = torch.ones(self.rulTargetLength, self.size)
     end
@@ -148,18 +150,23 @@ function BoxSwitchBatch:__init(srcs, srcFeatures, tgt, tgtFeatures, bsLen,
       self.targetOutput[{{1, targetLength}, b}]:copy(targetOutput)
 
       -- pointers[b] is numPtrs x (1+maxLabels+1)
-      local maxLabels_b = pointers[b]:size(2)-2
-      for jj = 1, pointers[b]:size(1) do
-          local t = pointers[b][jj][1]
-          self.zs[t][b] = 1 -- a pointer
-          if multilabel then
-              -- copy label indices
-              self.pointerTargets[t][b]:sub(1, maxLabels_b)
-                  :copy(pointers[b][jj]:sub(2, maxLabels_b+1))
-              -- put number of nz labels in last spot
-              self.pointerTargets[t][b][self.pointerTargets:size(3)] = pointers[b][jj][maxLabels_b+2]
-          else -- just take first
-              self.pointerTargets[t][b] = pointers[b][jj][2]
+      -- note that below is correct b/c preproc appends a BOS token, and
+      -- the pointers have the (unpadded) tgtIndices that point to srcIndices.
+      -- so we get that the zs indicate the word preceding a copied word
+      if pointers[b]:dim() > 0 then -- sometimes we have no pointer info i guess
+          local maxLabels_b = pointers[b]:size(2)-2
+          for jj = 1, pointers[b]:size(1) do
+              local t = pointers[b][jj][1]
+              self.zs[t][b] = 1 -- a pointer
+              if multilabel then
+                  -- copy label indices
+                  self.pointerTargets[t][b]:sub(1, maxLabels_b)
+                      :copy(pointers[b][jj]:sub(2, maxLabels_b+1))
+                  -- put number of nz labels in last spot
+                  self.pointerTargets[t][b][self.pointerTargets:size(3)] = pointers[b][jj][maxLabels_b+2]
+              else -- just take first
+                  self.pointerTargets[t][b] = pointers[b][jj][2]
+              end
           end
       end
     end

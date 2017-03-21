@@ -167,7 +167,7 @@ local function buildDecoder(opt, dicts, verbose, tripV)
 
   if #dicts.features > 0 then
     generator = onmt.FeaturesGenerator.new(opt.rnn_size, dicts.words:size(), dicts.features)
-  elseif opt.copy_generate then
+  elseif opt.copy_generate and not opt.switch then
     if opt.poe then
         generator = onmt.CopyPOEGenerator.new(opt.rnn_size, dicts.words:size(), opt.tanh_query, opt.double_output)
     else

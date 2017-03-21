@@ -427,7 +427,7 @@ function SwitchingDecoder:backward(batch, outputs, criterion, ctxLen, dummy, swi
   local gradContextInput = onmt.utils.Tensor.reuseTensor(self.gradContextProto,
                                                          { batch.size, ctxLen, self.args.rnnSize })
 
-  local loss = 0
+  local loss, switchLoss, ptrLoss = 0, 0, 0
 
   local context = self.inputs[1][self.args.inputIndex.context]
 
@@ -438,18 +438,18 @@ function SwitchingDecoder:backward(batch, outputs, criterion, ctxLen, dummy, swi
 
     local zs = batch:getZs(t)
     local zpreds = self.switcher:forward({context, finalLayer})
-    local switchLoss = switchCrit:forward(zpreds, zs)
+    switchLoss = switchLoss + switchCrit:forward(zpreds, zs)
     local zpredGradOut = switchCrit:backward(zpreds, zs)
     zpredGradOut:div(batch.totalSize)
     local decSwitchGO = self.switcher:backward({context, finalLayer}, zpredGradOut)
 
     local ptrPreds = self.ptrGenerator:forward({context, finalLayer})
-    local ptrLoss = ptrCrit:forward(ptrPreds, batch:getPointerTargets(t))
+    ptrLoss = ptrLoss + ptrCrit:forward(ptrPreds, batch:getPointerTargets(t))
     local ptrPredGradOut = ptrCrit:backward(ptrPreds, batch:getPointerTargets(t))
-    ptrPredGradOut[1]:div(batch.totalSize)
+    ptrPredGradOut:div(batch.totalSize)
     for b = 1, batch.size do
         if zs[b] ~= 1 then -- not a copy
-            ptrPredGradOut[1][b]:zero()
+            ptrPredGradOut[b]:zero()
         end
     end
     local decPtrGO = self.ptrGenerator:backward({context, finalLayer}, ptrPredGradOut)
@@ -520,7 +520,7 @@ function SwitchingDecoder:backward(batch, outputs, criterion, ctxLen, dummy, swi
       end
   end
 
-  return gradStatesInput, gradContextInput, loss
+  return gradStatesInput, gradContextInput, loss, switchLoss, ptrLoss
 end
 
 --[[ Compute the loss on a batch.
@@ -544,11 +544,11 @@ function SwitchingDecoder:computeLoss(batch, encoderStates, context, criterion)
     local finalLayer = self:net(t).output[self.args.numEffectiveLayers]
     local zpreds = self.switcher:forward({context, finalLayer})
     local ptrPreds = self.ptrGenerator:forward({context, finalLayer})
-    local pred = self.generator:forward(out)
-    local output = batch:getTargetOutput(t)
+    local pred = self.generator:forward(out)[1]
+    local output = batch:getTargetOutput(t)[1]
     for b = 1, batch.size do
         if self.map then -- just take argmax prob
-            if zpreds[b] >= 0.5 then -- a copy
+            if zpreds[b][1] >= 0.5 then -- a copy
                 pred[b]:zero()
                 --  marginalize over all copies of same word
                 ptrPreds[b]:exp()
@@ -559,11 +559,11 @@ function SwitchingDecoder:computeLoss(batch, encoderStates, context, criterion)
                 loss = loss - pred[b][output[b]]
             end
         else -- truly marginalize
-            pred[b]:add(math.log(1-zpreds[b]))
-            ptrPreds[b]:add(math.log(zpreds[b]))
+            pred[b]:add(math.log(1-zpreds[b][1]))
+            ptrPreds[b]:add(math.log(zpreds[b][1]))
             pred[b]:exp()
             ptrPreds[b]:exp()
-            pred[b]:indexAdd(1, batch:getCellsForExample(b), ptrPreds)
+            pred[b]:indexAdd(1, batch:getCellsForExample(b), ptrPreds[b])
             pred[b]:log()
             loss = loss - pred[b][output[b]]
         end
