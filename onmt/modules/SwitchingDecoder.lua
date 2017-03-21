@@ -587,6 +587,47 @@ function SwitchingDecoder:computeLoss(batch, encoderStates, context, criterion)
 end
 
 
+function SwitchingDecoder:computeActualLoss(batch, encoderStates, context, criterion, switchCrit, ptrCrit)
+  local encoderStates = encoderStates
+    or onmt.utils.Tensor.initTensorTable(self.args.numEffectiveLayers,
+                                         onmt.utils.Cuda.convert(torch.Tensor()),
+                                         { batch.size, self.args.rnnSize })
+
+  local loss = 0
+  self:forwardAndApply(batch, encoderStates, context, function (out, t)
+    local finalLayer = self:net(t).output[self.args.numEffectiveLayers]
+
+    local zs = batch:getZs(t)
+    local zpreds = self.switcher:forward({context, finalLayer})
+    local switchLoss = switchCrit:forward(zpreds, zs)
+    loss = loss + switchLoss
+
+    local ptrPreds = self.ptrGenerator:forward({context, finalLayer})
+    local ptrTargs = batch:getPointerTargets(t)
+    --local ptrLoss = ptrCrit:forward(ptrPreds, batch:getPointerTargets(t))
+
+    local pred = self.generator:forward(out)[1]
+    local output = batch:getTargetOutput(t)[1]
+    for b = 1, batch.size do
+        if output[b] ~= onmt.Constants.PAD then
+            if zs[b] == 1 then -- just take argmax prob
+                if self.multilabel then
+                    assert(false) -- don't wanna do it
+                else
+                    loss = loss - ptrPreds[b][ptrTargs[b]]
+                end
+            else
+                loss = loss - pred[b][output[b]]
+            end
+        end
+    end
+
+    --loss = loss + criterion:forward(pred, output)
+  end)
+
+  return loss
+end
+
 --[[ Compute the score of a batch.
 
 Parameters:
