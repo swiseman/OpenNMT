@@ -29,7 +29,7 @@ Parameters:
   * `tanhQuery` - bool, add an additional nonlinearity to target state when computing attn
 --]]
 function SwitchingDecoder:__init(inputNetwork, rnn, generator, inputFeed,
-    returnAttnScores, tanhQuery, map)
+    returnAttnScores, tanhQuery, map, multilabel)
   self.rnn = rnn
   self.inputNet = inputNetwork
 
@@ -55,7 +55,7 @@ function SwitchingDecoder:__init(inputNetwork, rnn, generator, inputFeed,
   self.generator = generator
   self:add(self.generator)
 
-  self.ptrGenerator = onmt.PointerGenerator(self.args.rnnSize, tanhQuery, false)
+  self.ptrGenerator = onmt.PointerGenerator(self.args.rnnSize, tanhQuery, false, multilabel)
   self:add(self.ptrGenerator)
 
   self.switcher = self:_buildSwitcher()

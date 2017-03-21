@@ -394,8 +394,8 @@ local function trainModel(model, trainData, validData, dataset, info)
             if iter % opt.report_every == 0 then
                 epochState:log(iter, opt.json_log)
                 if opt.switch then
-                    print("switchLoss", loss2/epochState.status.trainNonzeros)
-                    print("ptrLoss", loss3/epochState.status.trainNonzeros)
+                    print("switchLoss", totalLoss2/epochState.status.trainNonzeros)
+                    print("ptrLoss", totalLoss3/epochState.status.trainNonzeros)
                 end
                 collectgarbage()
             end
