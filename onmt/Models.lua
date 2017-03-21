@@ -219,7 +219,7 @@ local function embs_as_img_enc(lut)
 end
 
 --------------------------------------------------------------------------------
--- need to figure out how to incorporate source
+
 function embs_and_neg_as_img_enc(lut)
     -- maps batchSize x 2*seqLen -> batchSize x dim x 2 x seqLen.
     -- note that seqLen is trueSeqLen+1, where true is padded before and false padded after
@@ -229,6 +229,24 @@ function embs_and_neg_as_img_enc(lut)
                   :add(nn.Reshape(2, -1, dim, true)) -- batchSize x 2 x seqLen x dim
                   :add(nn.Transpose({2, 4}, {3, 4})) -- batchSize x dim x 2 x seqLen
     return enc
+end
+
+function embs_and_neg_as_condimg_enc(lut, seqLen, ctxdim)
+    -- maps batchSize x 2*seqLen -> batchSize x dim x 2 x seqLen.
+    -- note that seqLen is trueSeqLen+1, where true is padded before and false padded after
+    local dim = lut.weight:size(2) + ctxdim
+    local replicator = nn.Replicate(2*seqLen, 2, 2)
+    local enc = nn.Sequential()
+                  :add(nn.ParallelTable()
+                       :add(nn.Sequential()
+                              :add(nn.Reshape(1,-1,true)) -- bsz x 1 x ctxdim
+                              :add(replicator)
+                              :add(nn.Squeeze(2)))           -- bsz x 1 x 2*seqLen x ctxdim
+                       :add(lut)) -- batchSize x 2*seqLen x dim
+                  :add(nn.JoinTable(3)) -- batchSize x 2*seqLen x (dim+ctxdim)
+                  :add(nn.Reshape(2, -1, dim, true)) -- batchSize x 2 x seqLen x dim
+                  :add(nn.Transpose({2, 4}, {3, 4})) -- batchSize x dim x 2 x seqLen
+    return enc, replicator
 end
 
 function make_neg_gated_block(d, kW, dil, use_tanh)
