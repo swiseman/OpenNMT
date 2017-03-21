@@ -219,8 +219,8 @@ local function embs_as_img_enc(lut)
 end
 
 --------------------------------------------------------------------------------
-
-local function embs_and_neg_as_img_enc(lut)
+-- need to figure out how to incorporate source
+function embs_and_neg_as_img_enc(lut)
     -- maps batchSize x 2*seqLen -> batchSize x dim x 2 x seqLen.
     -- note that seqLen is trueSeqLen+1, where true is padded before and false padded after
     local dim = lut.weight:size(2)
@@ -231,8 +231,9 @@ local function embs_and_neg_as_img_enc(lut)
     return enc
 end
 
-local function make_neg_gated_block(d, mask, kW, dil, use_tanh)
+function make_neg_gated_block(d, kW, dil, use_tanh)
     -- input assumed to be batchSize x d x 2 x seqLen
+    -- output should be such that output[b][d][1][t] = output[b][d][2][t-1]
     local block
       = nn.Sequential()
           :add(nn.ConcatTable()
@@ -241,8 +242,9 @@ local function make_neg_gated_block(d, mask, kW, dil, use_tanh)
                         :add(nn.Narrow(4, 1, -(kW-1)*dil - 1)) -- batchSize x 2d x 2 x seqLen
                         :add(nn.Narrow(3, 1, 1))) -- batchSize x 2d x 1 x seqLen
                  :add(nn.Sequential()
-                        :add(nn.SpatialDilatedConvolution(d, 2*d, kW-1, 2, 1, 1, (kW-1)*dil, 0, dil, 1)) -- batchSize x 2d x 1 x seqLen+(kW-1)*dil+1
-                        :add(nn.Narrow(4, dil+1, -(kW-1)*dil - 1)))) -- batchSize x 2d x 1 x seqLen
+                        :add(nn.SpatialDilatedConvolution(d, 2*d, kW-1, 2, 1, 1, (kW-2)*dil, 0, dil, 1)) -- batchSize x 2d x 1 x seqLen+(kW-2)*dil
+                        --:add(nn.Narrow(4, dil+1, -(kW-1)*dil - 1)))) -- batchSize x 2d x 1 x seqLen
+                        :add(nn.Narrow(4, 1, -(kW-2)*dil - 1)))) -- batchSize x 2d x 1 x seqLen
           :add(nn.JoinTable(3)) -- batchSize x 2d x 2 x seqLen
           :add(nn.ConcatTable()
                  :add(use_tanh and nn.Sequential():add(nn.Narrow(2, 1, d)):add(nn.Tanh()) or nn.Narrow(2, 1, d))
@@ -250,6 +252,66 @@ local function make_neg_gated_block(d, mask, kW, dil, use_tanh)
          :add(nn.CMulTable()) -- batchSize x d x 2 x seqLen
     return block
 end
+
+function make_neg_bytenet_relu_block(d, kW, dil)
+    -- input assumed to be batchSize x 2d x 2 x seqLen
+    local block
+      = nn.Sequential()
+          :add(nn.ReLU()) -- in theory, BN before
+          --:add(cudnn.SpatialConvolution(2*d, d, 1, 1, 1, 1)) -- batchSize x d x 2 x seqLen
+          :add(nn.SpatialConvolution(2*d, d, 1, 1, 1, 1)) -- batchSize x d x 2 x seqLen
+          :add(nn.ReLU())
+          :add(nn.ConcatTable()
+                 :add(nn.Sequential()
+                        :add(nn.SpatialDilatedConvolution(d, d, kW, 1, 1, 1, (kW-1)*dil, 0, dil, 1)) -- batchSize x 2d x 2 x seqLen+(kW-1)*dil
+                        :add(nn.Narrow(4, 1, -(kW-1)*dil - 1)) -- batchSize x d x 2 x seqLen
+                        :add(nn.Narrow(3, 1, 1))) -- batchSize x d x 1 x seqLen
+                 :add(nn.Sequential()
+                        :add(nn.SpatialDilatedConvolution(d, d, kW-1, 2, 1, 1, (kW-2)*dil, 0, dil, 1)) -- batchSize x 2d x 2 x seqLen+(kW-1)*dil
+                        :add(nn.Narrow(4, 1, -(kW-2)*dil - 1)))) -- batchSize x d x 1 x seqLen
+          :add(nn.JoinTable(3)) -- batchSize x d x 2 x seqLen
+          :add(nn.ReLU()) -- in theory, BN before
+          --:add(cudnn.SpatialConvolution(d, 2*d, 1, 1, 1, 1)) -- batchSize x 2d x 2 x seqLen
+          :add(nn.SpatialConvolution(d, 2*d, 1, 1, 1, 1)) -- batchSize x 2d x 2 x seqLen
+    return block
+end
+
+function do_block_sharing(block, bytenet)
+    local cat_idx = bytenet and 4 or 1
+    local oned_conv = block:get(cat_idx):get(1):get(1)
+    local W1, b1 = oned_conv.weight, oned_conv.bias -- 2d x d x 1 x kW, 2d
+    local kW = W1:size(4)
+    local twod_conv = block:get(cat_idx):get(2):get(1)
+    local W2, b2 = twod_conv.weight, twod_conv.bias -- 2d x d x 2 x (kW-1), 2d
+
+    -- assuming considering only 1-step deviations for now
+    W2:narrow(3, 1, 1):copy(W1:narrow(4, 1, kW-1))
+    W2:narrow(3, 2, 1):narrow(4, 1, kW-2):zero()
+    W2:narrow(3, 2, 1):select(4, kW-1):copy(W1:select(4, kW))
+    b2:copy(b1)
+end
+
+function make_final_layer()
+    -- input is batchSize x d x 2 x seqLen
+    local mod = nn.Sequential()
+                  :add(nn.SplitTable(3))  -- 2-table w/ tensors of size batchSize x d x seqLen
+                  :add(nn.ParallelTable()
+                         :add(nn.Narrow(3, 2, -1))   -- batchSize x d x seqLen-1
+                         :add(nn.Narrow(3, 1, -2)))  -- batchSize x d x seqLen-1
+    -- output is 2-table w/ tensors of size batchSize x d x seqLen-1
+    return mod
+end
+
+require 'nn'
+-- let pad=1
+lut = nn.LookupTable(7, 4)
+lut.weight[1]:zero()
+
+X = torch.LongTensor({{1, 3, 4, 5, 2, 7, 6, 2, 4, 4, 5, 1},
+                      {1, 2, 5, 6, 3, 7, 5, 7, 3, 2, 4, 1}})
+
+X2 = torch.LongTensor({{1, 3, 4, 5, 2, 7, 3, 4, 5, 2, 7, 1},
+                       {1, 2, 5, 6, 3, 7, 2, 5, 6, 3, 7, 1}})
 
 return {
   buildEncoder = buildEncoder,
