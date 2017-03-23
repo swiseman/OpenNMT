@@ -120,7 +120,8 @@ function BoxSwitchBatch:__init(srcs, srcFeatures, tgt, tgtFeatures, bsLen,
         -- self.sourceInputPadLeft = true
 
         if j <= 2*g_nRegRows then
-            -- second feature is row name
+            -- second feature is row name; conceivable we would want a different vocab for these but
+            -- since they don't appear in the rows it's probably fine
             self.sourceInput:sub(currRow, currRow+srcLen-1, 2, 2):fill(srcs[j][b][1])
             -- third feature is col name
             self.sourceInput:sub(currRow, currRow+srcLen-1, 3, 3)

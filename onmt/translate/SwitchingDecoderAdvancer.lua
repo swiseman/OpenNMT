@@ -102,13 +102,13 @@ function SwitchingDecoderAdvancer:expand(beam)
   local state = beam:getState()
   local decOut = state[2]
   local context = state[3]
-  local finalState = state[1][#state[1]]
+  local finalLayer = state[1][#state[1]]
   local sourceIdxs = state[8]
   local zpreds = self.decoder.switcher:forward({context, finalLayer})
   local ptrPreds = self.decoder.ptrGenerator:forward({context, finalLayer})
   local pred = self.decoder.generator:forward(decOut)[1]
   --local out = self.decoder.generator:forward(decOut)
-  for b = 1, self.batch.size do
+  for b = 1, pred:size(1) do
       if self.map then -- just take argmax prob
           if zpreds[b][1] >= 0.5 then -- a copy
               pred[b]:zero() -- this is kind of stupid from a beam search perspective
@@ -136,10 +136,10 @@ function SwitchingDecoderAdvancer:expand(beam)
   end
 
   local features = {}
-  for j = 2, #out do
-    local _, best = out[j]:max(2)
-    features[j - 1] = best:view(-1)
-  end
+  -- for j = 2, #out do
+  --   local _, best = out[j]:max(2)
+  --   features[j - 1] = best:view(-1)
+  -- end
   state[5] = features
   --local scores = out[1]
   local scores = pred
