@@ -222,10 +222,11 @@ end
 
 function embs_and_neg_as_img_enc(lut)
     -- maps batchSize x 2*seqLen -> batchSize x dim x 2 x seqLen.
-    -- note that seqLen is trueSeqLen+1, where true is padded before and false padded after
+    -- this will do the padding before true and after fake automatically
     local dim = lut.weight:size(2)
     local enc = nn.Sequential()
                   :add(lut) -- batchSize x 2*seqLen x dim
+                  :add(nn.SpatialZeroPadding(0, 0, 1, 1)) -- batchSize x (1 + 2*seqLen + 1) x dim
                   :add(nn.Reshape(2, -1, dim, true)) -- batchSize x 2 x seqLen x dim
                   :add(nn.Transpose({2, 4}, {3, 4})) -- batchSize x dim x 2 x seqLen
     return enc
@@ -238,12 +239,13 @@ function embs_and_neg_as_condimg_enc(lut, seqLen, ctxdim)
     local replicator = nn.Replicate(2*seqLen, 2, 2)
     local enc = nn.Sequential()
                   :add(nn.ParallelTable()
+                       :add(lut)                         -- batchSize x 2*seqLen x dim
                        :add(nn.Sequential()
                               :add(nn.Reshape(1,-1,true)) -- bsz x 1 x ctxdim
-                              :add(replicator)
-                              :add(nn.Squeeze(2)))           -- bsz x 1 x 2*seqLen x ctxdim
-                       :add(lut)) -- batchSize x 2*seqLen x dim
+                              :add(replicator)            -- bsz x 1 x 2*seqLen x ctxdim
+                              :add(nn.Squeeze(2))))       -- bsz x 2*seqLen x ctxdim
                   :add(nn.JoinTable(3)) -- batchSize x 2*seqLen x (dim+ctxdim)
+                  :add(nn.SpatialZeroPadding(0, 0, 1, 1)) -- batchSize x (1 + 2*seqLen + 1) x dim
                   :add(nn.Reshape(2, -1, dim, true)) -- batchSize x 2 x seqLen x dim
                   :add(nn.Transpose({2, 4}, {3, 4})) -- batchSize x dim x 2 x seqLen
     return enc, replicator
@@ -321,15 +323,22 @@ function make_final_layer()
 end
 
 require 'nn'
--- let pad=1
+
 lut = nn.LookupTable(7, 4)
-lut.weight[1]:zero()
+-- let pad=1
+--lut.weight[1]:zero()
 
-X = torch.LongTensor({{1, 3, 4, 5, 2, 7, 6, 2, 4, 4, 5, 1},
-                      {1, 2, 5, 6, 3, 7, 5, 7, 3, 2, 4, 1}})
+-- X = torch.LongTensor({{1, 3, 4, 5, 2, 7, 6, 2, 4, 4, 5, 1},
+--                       {1, 2, 5, 6, 3, 7, 5, 7, 3, 2, 4, 1}})
+--
+-- X2 = torch.LongTensor({{1, 3, 4, 5, 2, 7, 3, 4, 5, 2, 7, 1},
+--                        {1, 2, 5, 6, 3, 7, 2, 5, 6, 3, 7, 1}})
 
-X2 = torch.LongTensor({{1, 3, 4, 5, 2, 7, 3, 4, 5, 2, 7, 1},
-                       {1, 2, 5, 6, 3, 7, 2, 5, 6, 3, 7, 1}})
+X = torch.LongTensor({{3, 4, 5, 2, 7, 6, 2, 4, 4, 5},
+                      {2, 5, 6, 3, 7, 5, 7, 3, 2, 4}})
+
+X2 = torch.LongTensor({{3, 4, 5, 2, 7, 3, 4, 5, 2, 7},
+                       {2, 5, 6, 3, 7, 2, 5, 6, 3, 7}})
 
 return {
   buildEncoder = buildEncoder,
