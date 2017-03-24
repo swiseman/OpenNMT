@@ -22,4 +22,6 @@ require('onmt.modules.FeaturesGenerator')
 
 require('onmt.modules.ParallelClassNLLCriterion')
 
+require('onmt.modules.NugDecoder')
+
 return onmt
