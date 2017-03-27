@@ -186,17 +186,6 @@ local function add_block_grads(block, bytenet)
 end
 
 
-local function make_final_layer()
-    -- input is batchSize x d x 2 x seqLen
-    local mod = nn.Sequential()
-                  :add(nn.SplitTable(3))  -- 2-table w/ tensors of size batchSize x d x seqLen
-                  :add(nn.ParallelTable()
-                         :add(nn.Narrow(3, 2, -1))   -- batchSize x d x seqLen-1
-                         :add(nn.Narrow(3, 1, -2)))  -- batchSize x d x seqLen-1
-    -- output is 2-table w/ tensors of size batchSize x d x seqLen-1
-    return mod
-end
-
 -- require 'nn'
 --
 -- lut = nn.LookupTable(7, 4)
@@ -204,8 +193,8 @@ end
 -- X = torch.LongTensor({{3, 4, 5, 2, 7, 6, 2, 4, 4, 5},
 --                       {2, 5, 6, 3, 7, 5, 7, 3, 2, 4}})
 --
--- X2 = torch.LongTensor({{3, 4, 5, 2, 7, 3, 4, 5, 2, 7},
---                        {2, 5, 6, 3, 7, 2, 5, 6, 3, 7}})
+X2 = torch.LongTensor({{3, 4, 5, 2, 7, 3, 4, 5, 2, 7},
+                       {2, 5, 6, 3, 7, 2, 5, 6, 3, 7}})
 
 
 local NugDecoder, parent = torch.class('onmt.NugDecoder', 'onmt.Network')
@@ -219,6 +208,7 @@ function NugDecoder:__init(vocabSize, nlayers, inputSize, hiddenSize, kW,
   self.dropout = dropout
   self.lut = onmt.WordEmbedding.new(vocabSize, inputSize, pretrainedWords, false)
   local dummySeqLen = 2
+  -- assume ctx same size as input
   local net, replicator = embs_and_neg_as_condimg_enc(self.lut, dummySeqLen, inputSize)
   self.replicator = replicator
 
@@ -240,7 +230,7 @@ function NugDecoder:__init(vocabSize, nlayers, inputSize, hiddenSize, kW,
       if fair then
           layer = make_neg_gated_block(inputSize, kW, dil, useTanh, hiddenSize)
       else
-          layer = make_neg_bytenet_relu_block(inputSize, kW, dil, hiddenSize)
+          layer = make_neg_bytenet_relu_block(inputSize/2, kW, dil, hiddenSize)
       end
       table.insert(convLayers, layer)
       net:add(make_res_block(layer))
@@ -255,7 +245,12 @@ function NugDecoder:__init(vocabSize, nlayers, inputSize, hiddenSize, kW,
       net:add(nn.Dropout(dropout))
   end
 
-  --assert(false) -- add final layer (preceded maybe by relu or dropout or something)
+  net:add(SpatialConvolution(inputSize, 1, 1, 1, 1, 1)) -- batchSize x 1 x 2 x seqLen
+  net:add(nn.Squeeze(2)) -- batchSize x 2 x seqLen
+  net:add(nn.SplitTable(2)) -- 2-table w/ tensors of size batchSize x seqLen
+  net:add(nn.ParallelTable()
+            :add(nn.Narrow(2, 2, -1))   -- batchSize x seqLen-1
+            :add(nn.Narrow(2, 1, -2)))  -- batchSize x seqLen-1
 
   self.convLayers = convLayers
   self.fair = fair
@@ -264,7 +259,7 @@ function NugDecoder:__init(vocabSize, nlayers, inputSize, hiddenSize, kW,
 end
 
 function NugDecoder:updateOutput(input)
-    local twiceSeqLen = input:size(2)
+    local twiceSeqLen = input[1]:size(2)
     self.replicator.nfeatures = twiceSeqLen
     for i = 1, #self.convLayers do
         do_block_sharing(self.convLayers[i], not self.fair)

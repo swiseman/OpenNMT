@@ -23,5 +23,6 @@ require('onmt.modules.FeaturesGenerator')
 require('onmt.modules.ParallelClassNLLCriterion')
 
 require('onmt.modules.NugDecoder')
+require('onmt.modules.LogRankingCriterion')
 
 return onmt
