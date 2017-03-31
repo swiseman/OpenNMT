@@ -24,7 +24,7 @@ cmd:option('-tgt_vocab_size', 50000, [[Size of the target vocabulary]])
 cmd:option('-src_vocab', '', [[Path to an existing source vocabulary]])
 cmd:option('-tgt_vocab', '', [[Path to an existing target vocabulary]])
 cmd:option('-features_vocabs_prefix', '', [[Path prefix to existing features vocabularies]])
-cmd:option('-ptr_info', false, [[]])
+cmd:option('-ptr_fi', '', [[]])
 
 cmd:option('-src_seq_length', 50, [[Maximum source sequence length]])
 cmd:option('-tgt_seq_length', 50, [[Maximum target sequence length]])
@@ -381,7 +381,7 @@ local function makeData(jsondat, srcDicts, tgtDicts, shuffle)
 
     srcTriples = onmt.utils.Table.reorder(srcTriples, perm, true)
 
-    if opt.ptr_info then
+    if opt.ptr_fi:len() > 0 then
         g_ptrStuff = onmt.utils.Table.reorder(g_ptrStuff, perm, true)
     end
 
@@ -393,7 +393,7 @@ local function makeData(jsondat, srcDicts, tgtDicts, shuffle)
     end
   end
 
-  if opt.ptr_info then
+  if opt.ptr_fi:len() > 0 then
       assert(not shuffle or #g_ptrStuff == #srcs[1])
   end
 
@@ -449,9 +449,10 @@ local function main()
   local jsondat = cjson.decode(f:read("*all"))
   f:close()
 
-  if opt.ptr_info then
+  if opt.ptr_fi:len() > 0 then
       g_ptrStuff = tds.Vec()
-      local fi = assert(io.open("pointershit.txt", "r"))
+      --local fi = assert(io.open("pointershit.txt", "r"))
+      local fi = assert(io.open(opt.ptr_fi, "r"))
       while true do
           local line = fi:read()
           if line == nil then
@@ -503,6 +504,10 @@ local function main()
   data.valid = {}
   data.valid.src, data.valid.tgt = makeData(jsondat.valid,
                                             data.dicts.src, data.dicts.tgt, false)
+  if jsondat.test then
+      data.test = {}
+      data.test.src, data.test.tgt = makeData(jsondat.test, data.dicts.src, data.dicts.tgt, false)
+  end
   print('')
 
   if opt.src_vocab:len() == 0 then
