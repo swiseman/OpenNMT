@@ -25,6 +25,7 @@ require('onmt.modules.MarginalNLLCriterion')
 require('onmt.modules.KMinDist')
 require('onmt.modules.KMinXent')
 require('onmt.modules.ConvRecDecoder')
+require('onmt.modules.PairwiseDistDist')
 
 require('onmt.modules.SwitchingDecoder')
 require('onmt.modules.PointerGenerator')

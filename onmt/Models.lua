@@ -160,6 +160,64 @@ local function buildRec(opt, tripV)
 end
 
 
+local function buildRec2(opt, tripV)
+
+    local nDiscFeatures = 3 -- triples
+    local recViewer = nn.View(1, -1, opt.rnn_size)
+    local mod = nn.Sequential()
+                 :add(nn.JoinTable(2)) -- batchSize x seqLen*dim
+                 :add(recViewer) -- batchSize x seqLen x dim
+                 :add(nn.ConcatTable()
+                        :add(nn.Sequential()
+                            -- maybe no pad, since unreliable?
+             	            :add(cudnn.TemporalConvolution(opt.rnn_size, opt.nfilters, 3, 1, 0))
+             		        :add(nn.ReLU())
+             		        :add(nn.Max(2)))
+             	         :add(nn.Sequential()
+                            -- maybe no pad, since unreliable?
+             	            :add(cudnn.TemporalConvolution(opt.rnn_size, opt.nfilters, 5, 1, 0))
+             		        :add(nn.ReLU())
+             		        :add(nn.Max(2))))
+                 :add(nn.JoinTable(2)) -- batchSize x 2*numFilters
+
+    local nWindowFeats = 2*opt.nfilters
+
+    mod:add(nn.Linear(nWindowFeats, opt.recembsize*opt.nrecpreds))
+    mod:add(nn.ReLU())
+    mod:add(nn.View(-1, opt.nrecpreds, opt.recembsize)) -- batchSize x numPreds x srcEmbSize
+
+    assert(opt.partition_feats)
+    assert(opt.recembsize % nDiscFeatures == 0)
+    local featEmbDim = opt.recembsize/nDiscFeatures
+
+    local inpTbl = nn.Identity()()
+    local flatStuff = mod(inpTbl) -- batchSize x numPreds x srcEmbSize
+    local kDists = {}
+    local kLogDists = {}
+
+    for i = 1, nDiscFeatures do
+        local featurePiece = nn.Narrow(3, (i-1)*featEmbDim+1, featEmbDim)(flatStuff)
+        local kFeatPreds = nn.Linear(featEmbDim, tripV[i])(             -- batchSize*numPreds x tripV[i]
+                              nn.View(-1, featEmbDim)(featurePiece))
+        local kDist = nn.View(-1, opt.nrecpreds, tripV[i])(nn.SoftMax()(kFeatPreds))
+        table.insert(kDists, kDist)
+        table.insert(kLogDists, nn.LogSoftMax()(kFeatPreds)) -- batchSize*numPreds x tripV[i]
+    end
+
+    local tripVSum = tripV[1]
+    for j = 2, #tripV do
+        tripVSum = tripVSum + tripV[j]
+    end
+    local catOut = nn.View(-1, opt.nrecpreds, tripVSum)(nn.JoinTable(2)(kLogDists)) -- batchSize x numPreds x sum[outVocabSizes]
+    local outputs = {catOut}
+    for j = 1, #kDists do
+        table.insert(outputs, kDists[j])
+    end
+
+    return nn.gModule({inpTbl}, outputs), recViewer
+end
+
+
 local function buildDecoder(opt, dicts, verbose, tripV)
   local inputNetwork, inputSize = buildInputNetwork(opt, dicts, opt.pre_word_vecs_dec, opt.fix_word_vecs_dec)
 
@@ -188,9 +246,14 @@ local function buildDecoder(opt, dicts, verbose, tripV)
 
   if opt.copy_generate then
       if opt.discrec or opt.recdist > 0 then
-          local rec, recViewer = buildRec(opt, tripV)
+          local rec, recViewer
+          if opt.discdist > 0 then
+              rec, recViewer = buildRec2(opt, tripV)
+          else
+              rec, recViewer = buildRec(opt, tripV)
+          end
           return onmt.ConvRecDecoder.new(inputNetwork, rnn, generator, opt.input_feed == 1,
-                       opt.double_output, rec, recViewer, opt.rho, opt.discrec)
+                       opt.double_output, rec, recViewer, opt.rho, opt.discrec, opt.discdist)
       elseif opt.switch then
           return onmt.SwitchingDecoder.new(inputNetwork, rnn, generator, opt.input_feed == 1, false, false, opt.map, opt.multilabel)
       else

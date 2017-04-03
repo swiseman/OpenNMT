@@ -30,7 +30,7 @@ Parameters:
   * `inputFeed` - bool, enable input feeding.
 --]]
 function ConvRecDecoder:__init(inputNetwork, rnn, generator, inputFeed,
-    doubleOutput, rec, recViewer, rho, discrec)
+    doubleOutput, rec, recViewer, rho, discrec, discdist)
   self.rnn = rnn
   self.inputNet = inputNetwork
 
@@ -39,6 +39,7 @@ function ConvRecDecoder:__init(inputNetwork, rnn, generator, inputFeed,
   self.args.numEffectiveLayers = self.rnn.numEffectiveLayers
   self.args.rho = rho
   self.args.discrec = discrec
+  self.args.discdist = discdist
 
   self.args.inputIndex = {}
   self.args.outputIndex = {}
@@ -58,6 +59,22 @@ function ConvRecDecoder:__init(inputNetwork, rnn, generator, inputFeed,
   self.recViewer = recViewer
   self.rec = rec
   self:add(self.rec)
+  if self.args.discdist > 0 then
+      -- just assuming we're cuda'ing
+      local parallelDistCrit = nn.ParallelCriterion()
+      local hellinger = self.args.discdist == 2
+      -- add one for each distribution
+      parallelDistCrit:add(nn.PairwiseDistDist(hellinger))
+      parallelDistCrit:add(nn.PairwiseDistDist(hellinger))
+      parallelDistCrit:add(nn.PairwiseDistDist(hellinger))
+      self.parallelDistCrit = onmt.utils.Cuda.convert(parallelDistCrit)
+      -- i suspect the internal shit doesn't work
+      for ii = 1, #self.parallelDistCrit.criterions do
+          for jj = 1, #self.parallelDistCrit.criterions[ii].crits do
+              self.parallelDistCrit.criterions[ii].crits[jj] = onmt.utils.Cuda.convert(self.parallelDistCrit.criterions[ii].crits[jj])
+          end
+      end
+  end
 
   self:resetPreallocation()
 end
@@ -405,21 +422,34 @@ function ConvRecDecoder:backward(batch, outputs, criterion, ctxLen, recCrit)
 
   -- rec loss and gradients
   local recloss = 0
+  local moarloss = 0
   local recStepGradOuts
   if batch.targetLength >= 5 then
       self.recViewer:resetSize(batch.size, -1, self.args.rnnSize)
       local recpreds = self.rec:forward(outputs)
-      local recOutGradOut, recCtxGradOut
+      local recOutGradOut, recCtxGradOut, moarOutGradOut
       if self.args.discrec then
-          recloss = recCrit:forward(recpreds, batch:getSourceTriples())*self.args.rho
-          recOutGradOut = recCrit:backward(recpreds, batch:getSourceTriples())
+          if self.args.discdist > 0 then
+                recloss = recCrit:forward(recpreds[1], batch:getSourceTriples())*self.args.rho
+                local moarInput = {recpreds[2], recpreds[3], recpreds[4]}
+                moarloss = self.parallelDistCrit:forward(moarInput, {}) -- no targets necessary
+                recOutGradOut = recCrit:backward(recpreds[1], batch:getSourceTriples())
+                moarOutGradOut = parallelDistCrit:backward(moarInput, {})
+          else
+                recloss = recCrit:forward(recpreds, batch:getSourceTriples())*self.args.rho
+                recOutGradOut = recCrit:backward(recpreds, batch:getSourceTriples())
+          end
       else
           recloss = recCrit:forward(recpreds, context)*self.args.rho
           recOutGradOut, recCtxGradOut = recCrit:backward(recpreds, context)
           -- add encoder grads
           gradContextInput:add(self.args.rho/batch.totalSize, recCtxGradOut)
       end
-      recStepGradOuts = self.rec:backward(outputs, recOutGradOut)
+      if self.args.discrec and self.args.discdist > 0 then
+          recStepGradOuts = self.rec:backward(outputs, {recOutGradOut, moarOutGradOut[1], moarOutGradOut[2], moarOutGradOut[3]})
+      else
+          recStepGradOuts = self.rec:backward(outputs, recOutGradOut)
+      end
   end
 
 
@@ -520,13 +550,13 @@ function ConvRecDecoder:computeLoss(batch, encoderStates, context, criterion, re
     --print("loss", loss)
   end)
 
-  self.recViewer:resetSize(batch.size, -1, self.args.rnnSize)
-  local recpreds = self.rec:forward(outputs)
-  local recOutGradOut, recCtxGradOut
-  assert(self.args.discrec)
-  local recloss = recCrit:forward(recpreds, batch:getSourceTriples())*self.args.rho
+  -- self.recViewer:resetSize(batch.size, -1, self.args.rnnSize)
+  -- local recpreds = self.rec:forward(outputs)
+  -- local recOutGradOut, recCtxGradOut
+  -- assert(self.args.discrec)
+  -- local recloss = recCrit:forward(recpreds, batch:getSourceTriples())*self.args.rho
 
-  return loss + recloss
+  return loss --+ recloss
 end
 
 

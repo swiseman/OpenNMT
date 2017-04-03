@@ -42,6 +42,7 @@ cmd:option('-tanh_query', false, [[]])
 cmd:option('-poe', false, [[]])
 cmd:option('-recdist', 0, [[]])
 cmd:option('-discrec', false, [[]])
+cmd:option('-discdist', 0, [[1 for total dev; 2 for hellinger]])
 cmd:option('-recembsize', 300, [[]])
 cmd:option('-partition_feats', false, [[]])
 cmd:option('-nfilters', 200, [[]])
@@ -394,8 +395,12 @@ local function trainModel(model, trainData, validData, dataset, info)
                 optim:updateParams(params, gradParams)
                 --epochState:update(batch, loss, recloss)
                 epochState:update(batch, loss, nil)
-                totalLoss2 = totalLoss2 + loss2
-                totalLoss3 = totalLoss3 + loss3
+                if loss2 then
+                    totalLoss2 = totalLoss2 + loss2
+                end
+                if loss3 then
+                    totalLoss3 = totalLoss3 + loss3
+                end
                 batch:nextPiece()
             end
 
