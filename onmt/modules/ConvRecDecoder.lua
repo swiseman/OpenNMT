@@ -434,7 +434,8 @@ function ConvRecDecoder:backward(batch, outputs, criterion, ctxLen, recCrit)
                 local moarInput = {recpreds[2], recpreds[3], recpreds[4]}
                 moarloss = self.parallelDistCrit:forward(moarInput, {}) -- no targets necessary
                 recOutGradOut = recCrit:backward(recpreds[1], batch:getSourceTriples())
-                moarOutGradOut = parallelDistCrit:backward(moarInput, {})
+                moarOutGradOut = self.parallelDistCrit:backward(moarInput, {})
+		--for jj = 1, 3 do moarOutGradOut[jj]:neg() end
           else
                 recloss = recCrit:forward(recpreds, batch:getSourceTriples())*self.args.rho
                 recOutGradOut = recCrit:backward(recpreds, batch:getSourceTriples())

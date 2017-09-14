@@ -61,6 +61,9 @@ function PairwiseDistDist:updateGradInput(input)
         self.gradInput = self.sqrt:backward(input, gradInput)
     end
 
+    -- sometimes we get nans
+    self.gradInput[self.gradInput:ne(self.gradInput)] = 0
+
     return self.gradInput
 end
 

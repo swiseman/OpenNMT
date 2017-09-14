@@ -21,6 +21,7 @@ cmd:option('-train_from', '', [[If training from a checkpoint then this is the p
 cmd:option('-continue', false, [[If training from a checkpoint, whether to continue the training in the same configuration or not.]])
 cmd:option('-just_eval', false, [[]])
 cmd:option('-just_gen', false, [[]])
+cmd:option('-test', false, [[]])
 cmd:option('-beam_size', 5, [[]])
 cmd:option('-gen_file', 'preds.txt', [[]])
 cmd:option('-verbose_eval', false, [[]])
@@ -435,10 +436,10 @@ local function trainModel(model, trainData, validData, dataset, info)
         return
     elseif opt.just_eval then
         validPpl = eval(model, criterion, validData)
-        if not opt.json_log then
+        --if not opt.json_log then
             print('Validation perplexity: ' .. validPpl)
-        end
-        onmt.train.Greedy.greedy_eval(model, validData, nil, g_tgtDict, 1, 10, opt.verbose_eval)
+        --end
+        --onmt.train.Greedy.greedy_eval(model, validData, nil, g_tgtDict, 1, 10, opt.verbose_eval)
         return
     elseif opt.scoresomethings then
         --validPpl = eval(model, criterion, validData)
@@ -581,8 +582,15 @@ local function main()
 
   local trainData = onmt.data.BoxDataset2.new(dataset.train.src, dataset.train.tgt,
     colStartIdx, g_nFeatures, opt.copy_generate, nil, tripV, opt.switch, opt.multilabel)
-  local validData = onmt.data.BoxDataset2.new(dataset.valid.src, dataset.valid.tgt,
-    colStartIdx, g_nFeatures, opt.copy_generate, nil, tripV) -- no switching on valid
+  local validData
+  if opt.test then
+    print("chest")
+    validData = onmt.data.BoxDataset2.new(dataset.test.src, dataset.test.tgt,
+      colStartIdx, g_nFeatures, opt.copy_generate, nil, tripV)
+  else
+    validData = onmt.data.BoxDataset2.new(dataset.valid.src, dataset.valid.tgt,
+      colStartIdx, g_nFeatures, opt.copy_generate, nil, tripV) -- no switching on valid
+  end
 
   trainData:setBatchSize(opt.max_batch_size)
   validData:setBatchSize(opt.max_batch_size)
